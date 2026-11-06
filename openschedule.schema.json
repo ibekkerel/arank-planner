@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenSchedule 0.5",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "name",
+    "startDate",
+    "currency",
+    "calendar",
+    "activities",
+    "links",
+    "resources",
+    "baseline",
+    "unitCatalog",
+    "typeCatalog",
+    "levelResources"
+  ],
+  "properties": {
+    "format": {
+      "const": "OpenSchedule"
+    },
+    "version": {
+      "const": "0.5"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "startDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timezone",
+        "weekdays",
+        "holidays"
+      ],
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "weekdays": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          }
+        },
+        "holidays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        }
+      }
+    },
+    "activities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "duration",
+          "progress",
+          "resource",
+          "units",
+          "ifcGlobalIds",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "progress": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "resource": {
+            "type": "string"
+          },
+          "units": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "volume": {
+            "type": "number",
+            "minimum": 0
+          },
+          "productivity": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "ifcGlobalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "enum": [
+              "task",
+              "milestone",
+              "summary"
+            ]
+          },
+          "parent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "volumeUnit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "earliestStart": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "requestedStart": {
+            "type": "string",
+            "format": "date"
+          },
+          "requestedFinish": {
+            "type": "string",
+            "format": "date"
+          },
+          "lockStart": {
+            "type": "boolean"
+          },
+          "lockFinish": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          }
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "from",
+          "to",
+          "type",
+          "lag"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "enum": [
+              "FS",
+              "SS",
+              "FF",
+              "SF"
+            ]
+          },
+          "lag": {
+            "type": "integer",
+            "minimum": -100000,
+            "maximum": 100000
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "capacity",
+          "dailyRate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "capacity": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "dailyRate": {
+            "type": "number",
+            "minimum": 0
+          },
+          "typeID": {
+            "type": "string",
+            "minLength": 1
+          },
+          "productivity": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "finish"
+        ],
+        "properties": {
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finish": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "unitCatalog": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "symbol"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbol": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "typeCatalog": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "unitID",
+          "outputUnitID"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unitID": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outputUnitID": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "levelResources": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,247 @@
+{
+  "activities" : [
+    {
+      "duration" : 4,
+      "id" : "A",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Подготовка площадки",
+      "productivity" : 20,
+      "progress" : 100,
+      "resource" : "crew",
+      "units" : 1,
+      "volume" : 120.5,
+      "volumeUnit" : "м³"
+    },
+    {
+      "duration" : 6,
+      "id" : "B",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Земляные работы",
+      "progress" : 40,
+      "resource" : "crew",
+      "units" : 1
+    },
+    {
+      "duration" : 9,
+      "id" : "C",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Закупка конструкций",
+      "progress" : 20,
+      "resource" : "supply",
+      "units" : 1
+    },
+    {
+      "duration" : 8,
+      "id" : "D",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Фундамент",
+      "progress" : 0,
+      "resource" : "crew",
+      "units" : 1
+    },
+    {
+      "duration" : 10,
+      "id" : "E",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Монтаж каркаса",
+      "progress" : 0,
+      "resource" : "crew",
+      "units" : 1
+    },
+    {
+      "duration" : 7,
+      "id" : "F",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Инженерные системы",
+      "progress" : 0,
+      "resource" : "mep",
+      "units" : 1
+    },
+    {
+      "duration" : 0,
+      "id" : "G",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "milestone",
+      "name" : "Приёмка",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    }
+  ],
+  "baseline" : {
+
+  },
+  "calendar" : {
+    "holidays" : [
+
+    ],
+    "timezone" : "Europe/Moscow",
+    "weekdays" : [
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "currency" : "RUB",
+  "format" : "OpenSchedule",
+  "id" : "FB59FEDC-35B5-4B98-B5D0-B563AFE3CE83",
+  "levelResources" : true,
+  "links" : [
+    {
+      "from" : "A",
+      "id" : "8E7B6358-F62D-44FD-92A6-831858A5898F",
+      "lag" : 0,
+      "to" : "B",
+      "type" : "FS"
+    },
+    {
+      "from" : "A",
+      "id" : "99D03A10-BD80-4B6E-9854-E1F0C71F5A06",
+      "lag" : 0,
+      "to" : "C",
+      "type" : "FS"
+    },
+    {
+      "from" : "B",
+      "id" : "50D0457B-8155-4A16-9F82-FC897C2ED0C9",
+      "lag" : 0,
+      "to" : "D",
+      "type" : "FS"
+    },
+    {
+      "from" : "D",
+      "id" : "A8D76F2E-305B-4E04-86CE-FF1CA4AE042F",
+      "lag" : 0,
+      "to" : "E",
+      "type" : "FS"
+    },
+    {
+      "from" : "C",
+      "id" : "995EDDAE-D7F2-4DA3-A20E-B35C60D59D41",
+      "lag" : 0,
+      "to" : "E",
+      "type" : "FS"
+    },
+    {
+      "from" : "E",
+      "id" : "57603D1F-51C7-472E-AF8A-F5EA64C5195A",
+      "lag" : 0,
+      "to" : "F",
+      "type" : "FS"
+    },
+    {
+      "from" : "F",
+      "id" : "EFABAE65-3237-42AD-8867-FBEF4828D799",
+      "lag" : 0,
+      "to" : "G",
+      "type" : "FS"
+    }
+  ],
+  "name" : "Строительство · корпус А",
+  "resources" : [
+    {
+      "capacity" : 1,
+      "dailyRate" : 45000,
+      "id" : "crew",
+      "name" : "Строительная бригада"
+    },
+    {
+      "capacity" : 1,
+      "dailyRate" : 18000,
+      "id" : "supply",
+      "name" : "Снабжение"
+    },
+    {
+      "capacity" : 1,
+      "dailyRate" : 38000,
+      "id" : "mep",
+      "name" : "Инженерная бригада"
+    }
+  ],
+  "startDate" : "2026-11-09",
+  "typeCatalog" : [
+    {
+      "id" : "labor",
+      "name" : "Трудовой ресурс",
+      "outputUnitID" : "piece",
+      "unitID" : "person"
+    },
+    {
+      "id" : "equipment",
+      "name" : "Механизм",
+      "outputUnitID" : "m3",
+      "unitID" : "machine"
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "outputUnitID" : "m3",
+      "unitID" : "team"
+    }
+  ],
+  "unitCatalog" : [
+    {
+      "id" : "m3",
+      "name" : "Кубический метр",
+      "symbol" : "м³"
+    },
+    {
+      "id" : "m2",
+      "name" : "Квадратный метр",
+      "symbol" : "м²"
+    },
+    {
+      "id" : "m",
+      "name" : "Метр",
+      "symbol" : "м"
+    },
+    {
+      "id" : "piece",
+      "name" : "Штука",
+      "symbol" : "шт."
+    },
+    {
+      "id" : "person",
+      "name" : "Человек",
+      "symbol" : "чел."
+    },
+    {
+      "id" : "machine",
+      "name" : "Машина",
+      "symbol" : "маш."
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "symbol" : "бриг."
+    },
+    {
+      "id" : "ton",
+      "name" : "Тонна",
+      "symbol" : "т"
+    }
+  ],
+  "version" : "0.5"
+}

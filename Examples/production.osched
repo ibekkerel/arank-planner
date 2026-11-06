@@ -1,0 +1,116 @@
+{
+  "activities" : [
+    {
+      "duration" : 1,
+      "id" : "work",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Concrete",
+      "progress" : 0,
+      "resource" : "team",
+      "units" : 2,
+      "volume" : 100,
+      "volumeUnit" : "м³"
+    }
+  ],
+  "baseline" : {
+
+  },
+  "calendar" : {
+    "holidays" : [
+
+    ],
+    "timezone" : "Europe/Moscow",
+    "weekdays" : [
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "currency" : "RUB",
+  "format" : "OpenSchedule",
+  "id" : "09918FF9-3C37-4382-82EB-74D8F3913D24",
+  "levelResources" : true,
+  "links" : [
+
+  ],
+  "name" : "Production",
+  "resources" : [
+    {
+      "capacity" : 2,
+      "dailyRate" : 100,
+      "id" : "team",
+      "name" : "Concrete crew",
+      "productivity" : 10,
+      "typeID" : "team"
+    }
+  ],
+  "startDate" : "2026-11-09",
+  "typeCatalog" : [
+    {
+      "id" : "labor",
+      "name" : "Трудовой ресурс",
+      "outputUnitID" : "piece",
+      "unitID" : "person"
+    },
+    {
+      "id" : "equipment",
+      "name" : "Механизм",
+      "outputUnitID" : "m3",
+      "unitID" : "machine"
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "outputUnitID" : "m3",
+      "unitID" : "team"
+    }
+  ],
+  "unitCatalog" : [
+    {
+      "id" : "m3",
+      "name" : "Кубический метр",
+      "symbol" : "м³"
+    },
+    {
+      "id" : "m2",
+      "name" : "Квадратный метр",
+      "symbol" : "м²"
+    },
+    {
+      "id" : "m",
+      "name" : "Метр",
+      "symbol" : "м"
+    },
+    {
+      "id" : "piece",
+      "name" : "Штука",
+      "symbol" : "шт."
+    },
+    {
+      "id" : "person",
+      "name" : "Человек",
+      "symbol" : "чел."
+    },
+    {
+      "id" : "machine",
+      "name" : "Машина",
+      "symbol" : "маш."
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "symbol" : "бриг."
+    },
+    {
+      "id" : "ton",
+      "name" : "Тонна",
+      "symbol" : "т"
+    }
+  ],
+  "version" : "0.5"
+}

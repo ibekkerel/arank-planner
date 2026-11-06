@@ -1,0 +1,172 @@
+{
+  "activities" : [
+    {
+      "duration" : 0,
+      "id" : "root",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "summary",
+      "name" : "Phase",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    },
+    {
+      "duration" : 0,
+      "id" : "nested",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "summary",
+      "name" : "Subphase",
+      "parent" : "root",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    },
+    {
+      "duration" : 4,
+      "id" : "one",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Task",
+      "parent" : "nested",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    },
+    {
+      "duration" : 3,
+      "id" : "two",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Task 2",
+      "parent" : "root",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    },
+    {
+      "duration" : 0,
+      "id" : "gate",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "milestone",
+      "name" : "Milestone",
+      "parent" : "root",
+      "progress" : 0,
+      "resource" : "",
+      "units" : 1
+    }
+  ],
+  "baseline" : {
+
+  },
+  "calendar" : {
+    "holidays" : [
+
+    ],
+    "timezone" : "Europe/Moscow",
+    "weekdays" : [
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "currency" : "RUB",
+  "format" : "OpenSchedule",
+  "id" : "2A4D1DB1-02EA-4359-AB3B-BE095405ACDA",
+  "levelResources" : true,
+  "links" : [
+    {
+      "from" : "one",
+      "id" : "B3E037ED-A3BD-4BE8-9059-B8AA758E55F6",
+      "lag" : 0,
+      "to" : "two",
+      "type" : "FS"
+    },
+    {
+      "from" : "two",
+      "id" : "CD5F85A8-DDE7-4A9A-932B-DB9CDDE5761B",
+      "lag" : 0,
+      "to" : "gate",
+      "type" : "FS"
+    }
+  ],
+  "name" : "Hierarchy",
+  "resources" : [
+
+  ],
+  "startDate" : "2026-11-09",
+  "typeCatalog" : [
+    {
+      "id" : "labor",
+      "name" : "Трудовой ресурс",
+      "outputUnitID" : "piece",
+      "unitID" : "person"
+    },
+    {
+      "id" : "equipment",
+      "name" : "Механизм",
+      "outputUnitID" : "m3",
+      "unitID" : "machine"
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "outputUnitID" : "m3",
+      "unitID" : "team"
+    }
+  ],
+  "unitCatalog" : [
+    {
+      "id" : "m3",
+      "name" : "Кубический метр",
+      "symbol" : "м³"
+    },
+    {
+      "id" : "m2",
+      "name" : "Квадратный метр",
+      "symbol" : "м²"
+    },
+    {
+      "id" : "m",
+      "name" : "Метр",
+      "symbol" : "м"
+    },
+    {
+      "id" : "piece",
+      "name" : "Штука",
+      "symbol" : "шт."
+    },
+    {
+      "id" : "person",
+      "name" : "Человек",
+      "symbol" : "чел."
+    },
+    {
+      "id" : "machine",
+      "name" : "Машина",
+      "symbol" : "маш."
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "symbol" : "бриг."
+    },
+    {
+      "id" : "ton",
+      "name" : "Тонна",
+      "symbol" : "т"
+    }
+  ],
+  "version" : "0.5"
+}
