@@ -147,7 +147,7 @@ struct MainView: View {
             HStack(spacing:14) {
                 Label("Arank Planner",systemImage:"point.3.connected.trianglepath.dotted").font(.headline).foregroundStyle(.teal)
                 Divider().frame(height:20)
-                Text(w.plan.name + (w.dirty ? " •" : "")).font(.headline).lineLimit(1)
+                Text(w.plan.name + (w.dirty ? " •" : "")).font(.headline).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading).layoutPriority(-1)
                 Spacer()
                 Picker("Раздел",selection:$tab) { Text("График").tag("График"); Text("Ресурсы").tag("Ресурсы"); Text("Справочники").tag("Справочники"); Text("Проект").tag("Параметры") }.pickerStyle(.segmented).frame(width:400).labelsHidden()
                 Button { w.open() } label: { Image(systemName:"folder") }.help("Открыть проект ⌘O")
@@ -155,30 +155,33 @@ struct MainView: View {
             }.padding(.horizontal,16).padding(.vertical,10)
             Divider()
             if tab == "График" {
-                ScrollView(.horizontal) {
-                    HStack(alignment:.top,spacing:18) {
+                VStack(spacing:8) {
+                    HStack(alignment:.top,spacing:16) {
                         ribbonGroup("Создание") {
-                            Button("Задача",systemImage:"plus.rectangle") { add("task") }
-                            Button("Веха",systemImage:"diamond") { add("milestone") }
-                            Button("Суммарная",systemImage:"folder.badge.plus") { add("summary") }
-                            Button("Объединить (\(w.selectedIDs.count))") { w.groupSelection() }.disabled(w.selectedIDs.count < 2)
+                            Menu {
+                                Button("Задача",systemImage:"plus.rectangle") { add("task") }
+                                Button("Веха",systemImage:"diamond") { add("milestone") }
+                                Button("Суммарная задача",systemImage:"folder.badge.plus") { add("summary") }
+                            } label: { Label("Создать",systemImage:"plus") }.frame(width:115)
+                            Button("Объединить (\(w.selectedIDs.count))") { w.groupSelection() }.frame(width:145).disabled(w.selectedIDs.count < 2)
                         }
                         Divider().frame(height:54)
                         ribbonGroup("Расчёт") {
                             Picker("Режим расчёта",selection:Binding(get:{ w.automaticCalculation },set:{ w.setAutomaticCalculation($0) })) {
                                 Label("Авто",systemImage:"bolt.fill").tag(true)
                                 Label("Вручную",systemImage:"hand.raised.fill").tag(false)
-                            }.pickerStyle(.segmented).frame(width:190).help("Авто — расчёт после каждого изменения; вручную — по кнопке")
-                            if !w.automaticCalculation {
-                                Button { _ = w.recalculate() } label: { Label(w.needsCalculation ? "Пересчитать •" : "Пересчитать",systemImage:"arrow.clockwise") }
-                                    .tint(w.needsCalculation ? .orange : .teal)
-                                    .help(w.needsCalculation ? "Даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
-                            }
+                            }.pickerStyle(.segmented).labelsHidden().frame(width:190).help("Авто — расчёт после каждого изменения; вручную — по кнопке")
+                            Button { _ = w.recalculate() } label: { Label("Пересчитать",systemImage:"arrow.clockwise") }
+                                .frame(width:120).disabled(w.automaticCalculation && !w.needsCalculation)
+                                .tint(w.needsCalculation ? .orange : .teal)
+                                .help(w.needsCalculation ? "Даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
                             Toggle("По ресурсам",isOn:Binding(get:{ w.plan.levelResources ?? true },set:{ enabled in w.change { $0.levelResources = enabled } })).toggleStyle(.checkbox)
                             Button("Базовый план") { w.baseline() }
                             Button("Связи",systemImage:"arrow.triangle.branch") { showLinks.toggle() }
                         }
-                        Divider().frame(height:54)
+                        Spacer(minLength:0)
+                    }
+                    HStack(alignment:.top,spacing:16) {
                         ribbonGroup("Вид") {
                             Menu {
                                 Button("Раскрыть всё") { collapsed.removeAll() }
@@ -214,12 +217,17 @@ struct MainView: View {
                             Text("Таблица").font(.caption)
                             Slider(value:$preferredTableWidth,in:300...900).frame(width:110).help("Ширина табличной части; также потяните разделитель у графика")
                         }
-                    }.padding(.horizontal,16).padding(.vertical,8)
-                }.fixedSize(horizontal:false,vertical:true).background(Color(nsColor:.controlBackgroundColor))
-                if w.needsCalculation {
-                    Label("Есть изменения — требуется пересчёт. Даты, полосы и загрузка показаны по предыдущему расчёту.",systemImage:"exclamationmark.arrow.triangle.2.circlepath")
-                        .font(.caption).foregroundStyle(.orange).frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,16).padding(.vertical,5)
-                }
+                        Spacer(minLength:0)
+                    }
+                }.controlSize(.small).padding(.horizontal,12).padding(.vertical,8)
+                    .frame(maxWidth:.infinity).frame(height:128).background(Color(nsColor:.controlBackgroundColor))
+                HStack(spacing:6) {
+                    Image(systemName:w.needsCalculation ? "exclamationmark.circle.fill" : "checkmark.circle")
+                    Text(w.needsCalculation ? "Требуется пересчёт — даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength:0)
+                }.font(.caption).foregroundStyle(w.needsCalculation ? Color.orange : Color.secondary)
+                    .padding(.horizontal,16).frame(height:24)
                 if showMetrics, let r = w.result {
                     HStack { Metric(title:"ДЛИТЕЛЬНОСТЬ",value:"\(r.duration) раб. дн."); Metric(title:"ЗАТРАТЫ",value:"\(r.cost.formatted(.number.precision(.fractionLength(0)))) \(w.plan.currency)"); Metric(title:"ПЕРЕГРУЗКИ",value:"\(r.conflicts.count)") }.padding(10)
                 }

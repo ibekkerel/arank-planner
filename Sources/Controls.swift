@@ -168,6 +168,7 @@ final class ScrollObserverSurface:NSView {
     var changed:((CGFloat)->Void)?
     private var token:NSObjectProtocol?
     private weak var observed:NSClipView?
+    private var lastX:CGFloat?
     override func hitTest(_ point:NSPoint) -> NSView? { nil }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); attach() }
     func attach() {
@@ -175,12 +176,16 @@ final class ScrollObserverSurface:NSView {
             guard let self, let clip = self.enclosingScrollView?.contentView, self.observed !== clip else { return }
             if let token = self.token { NotificationCenter.default.removeObserver(token) }
             self.observed = clip; clip.postsBoundsChangedNotifications = true
-            self.changed?(clip.bounds.origin.x)
+            self.publish(clip.bounds.origin.x)
             self.token = NotificationCenter.default.addObserver(forName:NSView.boundsDidChangeNotification,object:clip,queue:.main) { [weak self,weak clip] _ in
                 guard let clip else { return }; let x = clip.bounds.origin.x
-                DispatchQueue.main.async { self?.changed?(x) }
+                DispatchQueue.main.async { self?.publish(x) }
             }
         }
+    }
+    private func publish(_ x:CGFloat) {
+        guard lastX.map({ abs($0-x) > 0.5 }) ?? true else { return }
+        lastX = x; changed?(x)
     }
     deinit { if let token { NotificationCenter.default.removeObserver(token) } }
 }
