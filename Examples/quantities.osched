@@ -106,54 +106,54 @@
   },
   "currency" : "RUB",
   "format" : "OpenSchedule",
-  "id" : "FB59FEDC-35B5-4B98-B5D0-B563AFE3CE83",
+  "id" : "C309B03E-2CA3-4360-AFC1-5C9A0B32B323",
   "levelResources" : true,
   "links" : [
     {
       "from" : "A",
-      "id" : "8E7B6358-F62D-44FD-92A6-831858A5898F",
+      "id" : "48F5A75E-A661-474A-9982-F6AC2484AB49",
       "lag" : 0,
       "to" : "B",
       "type" : "FS"
     },
     {
       "from" : "A",
-      "id" : "99D03A10-BD80-4B6E-9854-E1F0C71F5A06",
+      "id" : "9B3AD3F6-40C5-4DDA-A290-52F5A8BD2292",
       "lag" : 0,
       "to" : "C",
       "type" : "FS"
     },
     {
       "from" : "B",
-      "id" : "50D0457B-8155-4A16-9F82-FC897C2ED0C9",
+      "id" : "BE88FB55-FDF7-465A-85AE-9207F8298041",
       "lag" : 0,
       "to" : "D",
       "type" : "FS"
     },
     {
       "from" : "D",
-      "id" : "A8D76F2E-305B-4E04-86CE-FF1CA4AE042F",
+      "id" : "75DACBA7-5639-4A2F-BF1F-61C364382A3D",
       "lag" : 0,
       "to" : "E",
       "type" : "FS"
     },
     {
       "from" : "C",
-      "id" : "995EDDAE-D7F2-4DA3-A20E-B35C60D59D41",
+      "id" : "1E4D0D89-CDE1-4835-B55D-FF5F0DAE95B4",
       "lag" : 0,
       "to" : "E",
       "type" : "FS"
     },
     {
       "from" : "E",
-      "id" : "57603D1F-51C7-472E-AF8A-F5EA64C5195A",
+      "id" : "2484BE41-F0D3-40AB-846B-DF6A591AEC2D",
       "lag" : 0,
       "to" : "F",
       "type" : "FS"
     },
     {
       "from" : "F",
-      "id" : "EFABAE65-3237-42AD-8867-FBEF4828D799",
+      "id" : "4BA606CC-4AEA-44A0-8BAF-F2FCC1503036",
       "lag" : 0,
       "to" : "G",
       "type" : "FS"
@@ -243,5 +243,5 @@
       "symbol" : "т"
     }
   ],
-  "version" : "0.5"
+  "version" : "0.6"
 }

@@ -83,19 +83,19 @@
   },
   "currency" : "RUB",
   "format" : "OpenSchedule",
-  "id" : "2A4D1DB1-02EA-4359-AB3B-BE095405ACDA",
+  "id" : "96E8BD54-90D5-47F5-A681-CFF120ECF015",
   "levelResources" : true,
   "links" : [
     {
       "from" : "one",
-      "id" : "B3E037ED-A3BD-4BE8-9059-B8AA758E55F6",
+      "id" : "73450B40-F8E2-4D17-B0EF-38B54E4A11AA",
       "lag" : 0,
       "to" : "two",
       "type" : "FS"
     },
     {
       "from" : "two",
-      "id" : "CD5F85A8-DDE7-4A9A-932B-DB9CDDE5761B",
+      "id" : "EFF5C74F-681A-4127-8527-175482D5BCEF",
       "lag" : 0,
       "to" : "gate",
       "type" : "FS"
@@ -168,5 +168,5 @@
       "symbol" : "т"
     }
   ],
-  "version" : "0.5"
+  "version" : "0.6"
 }

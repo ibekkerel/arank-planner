@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "OpenSchedule 0.5",
+  "title": "OpenSchedule 0.6",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,7 +24,7 @@
       "const": "OpenSchedule"
     },
     "version": {
-      "const": "0.5"
+      "const": "0.6"
     },
     "id": {
       "type": "string",
@@ -245,6 +245,16 @@
           "productivity": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "calendarID": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeUnit": {
+            "enum": [
+              "day",
+              "hour"
+            ]
           }
         }
       }
@@ -329,6 +339,137 @@
     },
     "levelResources": {
       "type": "boolean"
+    },
+    "resourceCalendars": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "week": {
+            "type": "array",
+            "minItems": 7,
+            "maxItems": 7,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "weekday": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 7
+                },
+                "intervals": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1439
+                      },
+                      "end": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "end"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "weekday",
+                "intervals"
+              ]
+            }
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "through": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "kind": {
+                  "enum": [
+                    "vacation",
+                    "holiday",
+                    "off",
+                    "working"
+                  ]
+                },
+                "intervals": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1439
+                      },
+                      "end": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "end"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "from",
+                "through",
+                "kind",
+                "intervals"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "week",
+          "exceptions"
+        ]
+      }
     }
   }
 }

@@ -86,7 +86,9 @@ struct MainView: View {
     @State var showLinks = false
     @State var showMetrics = false
     @State var fit = true
-    @State var zoom = 24.0
+    @AppStorage("planner.zoom") var zoom = 24.0
+    @State var showScaleSettings = false
+    @State var canvasScrollX:CGFloat = 0
     @State var collapsed: Set<String> = []
     @State var connectionDrag: ConnectionDrag?
     @AppStorage("planner.visibleColumns") var visibleColumnIDs = "code,name,duration,start,finish,progress"
@@ -151,8 +153,10 @@ struct MainView: View {
                         }
                         Divider().frame(height:54)
                         ribbonGroup("Масштаб и таблица") {
-                            Toggle("По ширине",isOn:$fit).toggleStyle(.checkbox)
-                            if !fit { Slider(value:$zoom,in:4...64).frame(width:90) }
+                            Button { showScaleSettings.toggle() } label: { Label("Масштаб",systemImage:"magnifyingglass") }
+                                .popover(isPresented:$showScaleSettings) { GraphScaleSettings(fit:$fit,zoom:$zoom) }
+                            Button { fit = false; zoom = max(2,zoom/1.25) } label: { Image(systemName:"minus.magnifyingglass") }.help("Уменьшить график")
+                            Button { fit = false; zoom = min(160,zoom*1.25) } label: { Image(systemName:"plus.magnifyingglass") }.help("Увеличить график")
                             Text("Таблица").font(.caption)
                             Slider(value:$preferredTableWidth,in:300...900).frame(width:110).help("Ширина табличной части; также потяните разделитель у графика")
                         }
@@ -168,6 +172,7 @@ struct MainView: View {
                     let tableWidth = min(CGFloat(preferredTableWidth),geo.size.width * 0.65)
                     let dayWidth = fit ? max(1,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
                     let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
+                    VStack(spacing:0) {
                     ScrollView([.horizontal,.vertical]) {
                         VStack(alignment:.leading,spacing:0) {
                             header(days:days,dayWidth:dayWidth,chartWidth:chartWidth,tableWidth:tableWidth)
@@ -209,16 +214,17 @@ struct MainView: View {
                                     for y in stride(from:CGFloat(0),through:height,by:39) { path.move(to:CGPoint(x:0,y:y)); path.addLine(to:CGPoint(x:tableWidth+chartWidth,y:y)) }
                                     for d in 0...days { let x = tableWidth+CGFloat(d)*dayWidth; path.move(to:CGPoint(x:x,y:0)); path.addLine(to:CGPoint(x:x,y:height)) }
                                 }.stroke(Color.secondary.opacity(0.10),lineWidth:1)
-                            }.frame(height:max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(rows.count)*39 - (showResourceLoad ? 200 : 0)))
-                            if showResourceLoad, let result { ResourceLoadPanel(plan:w.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days).frame(height:200) }
+                            }.frame(height:max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(rows.count)*39 - (showResourceLoad ? 228 : 0)))
                         }.frame(width:tableWidth+chartWidth,alignment:.topLeading)
+                        .background { HorizontalScrollObserver { canvasScrollX = -$0 } }
                         .coordinateSpace(name:"scheduleCanvas")
                         .overlay(alignment:.topLeading) {
                             ConnectionLines(links:w.plan.links,rows:rows.map(\.activity),timings:result?.timings ?? [:],tableWidth:tableWidth,dayWidth:dayWidth,drag:connectionDrag).allowsHitTesting(false)
                         }
-                    }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+                    }.coordinateSpace(name:"scheduleViewport")
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
                     .overlay(alignment:.topLeading) {
-                        Rectangle().fill(Color.teal.opacity(0.4)).frame(width:5).contentShape(Rectangle()).offset(x:tableWidth-3)
+                        Rectangle().fill(Color.teal.opacity(0.4)).frame(width:5).contentShape(Rectangle()).offset(x:tableWidth+canvasScrollX-3)
                             .help("Перетащите, чтобы изменить ширину таблицы")
                             .gesture(DragGesture().onChanged { value in
                                 if dividerStart == nil { dividerStart = Double(tableWidth) }
@@ -229,6 +235,12 @@ struct MainView: View {
                         if contentWidth > tableWidth {
                             HStack { Text("Поля таблицы").font(.caption); Slider(value:$columnOffset,in:0...max(1,contentWidth-tableWidth)).accessibilityLabel("Прокрутка полей таблицы") }.padding(.horizontal,8).frame(width:tableWidth,height:25).background(Color(nsColor:.controlBackgroundColor)).frame(maxWidth:.infinity,alignment:.leading)
                         }
+                    }
+                    if showResourceLoad, let result {
+                        HStack { Label("Загрузка ресурсов",systemImage:"chart.bar.xaxis").font(.caption.bold()); Spacer(); Button("Скрыть",systemImage:"xmark") { showResourceLoad = false } }.padding(.horizontal,10).frame(height:28).background(Color(nsColor:.controlBackgroundColor))
+                        ResourceLoadPanel(plan:w.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
+                            .offset(x:canvasScrollX).frame(width:geo.size.width,height:200,alignment:.leading).clipped()
+                    }
                     }
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
                 if showLinks { Divider(); LinksPanel().frame(height:200).padding(.horizontal,16).padding(.vertical,8) }
@@ -412,16 +424,25 @@ struct ExistingLinkRow: View {
 
 struct ResourceView: View {
     @EnvironmentObject var w: Workspace
+    @State var calendarDraft:ResourceCalendar?
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
             HStack { Text("Ресурсы").font(.title2.bold()); Spacer(); Button("Добавить ресурс",systemImage:"plus") { w.change { $0.resources.append(Resource(id:UUID().uuidString,name:"Новый ресурс")) } } }
-            Text("Производительность — выработка одной единицы ресурса за рабочий день. Единица выработки и единица учёта задаются в типе ресурса.").foregroundStyle(.secondary)
-            HStack { Text("Название").frame(width:200,alignment:.leading); Text("Тип").frame(width:180,alignment:.leading); Text("Доступно").frame(width:80); Text("Ед. учёта").frame(width:70); Text("Выработка / день").frame(width:130); Text("Ед. выработки").frame(width:100); Text("Ставка / день").frame(width:110) }.font(.caption.bold())
+            Text("Выберите для ресурса календарь и период учёта: день или час. Производительность и ставка относятся к выбранному периоду. Дневная норма соответствует 8 часам.").foregroundStyle(.secondary)
+            HStack { Text("Название").frame(width:200,alignment:.leading); Text("Тип").frame(width:180,alignment:.leading); Text("Доступно").frame(width:80); Text("Ед. учёта").frame(width:70); Text("Выработка / период").frame(width:130); Text("Ед. выработки").frame(width:100); Text("Ставка / период").frame(width:110) }.font(.caption.bold())
             ForEach(w.plan.resources) { resource in ResourceEditorRow(resource:resource) }
             Divider()
             if let result = w.result { if result.conflicts.isEmpty { Label("Перегрузок нет",systemImage:"checkmark.circle").foregroundStyle(.teal) } else { ForEach(result.conflicts,id:\.self) { Text($0).foregroundStyle(.orange) } } }
-            Text("Для расчёта по ресурсу задайте объём задачи в единице выработки этого типа. Длительность = ⌈объём / (производительность × потребность ресурса)⌉. Потребность по умолчанию равна 1. Явная производительность задачи, если есть в файле, имеет приоритет. Переключатель «По ресурсам» включает выравнивание с учётом приоритета и фиксированных дат.").font(.callout).foregroundStyle(.secondary)
-        }
+            Text("Рабочее время ресурса пересекается с календарём проекта. Чтобы учитывать субботу или воскресенье, включите их и в календарь проекта. Почасовая выработка учитывает часы смен, а даты начала и окончания пока рассчитываются с точностью до рабочего дня.").font(.callout).foregroundStyle(.secondary)
+            Divider()
+            HStack { Text("Календари ресурсов").font(.title3.bold()); Spacer(); Button("Новый календарь",systemImage:"calendar.badge.plus") { calendarDraft = ResourceCalendar() } }
+            ForEach(w.plan.resourceCalendars ?? []) { calendar in
+                HStack { Text(calendar.name).bold(); Text("Исключений: \(calendar.exceptions.count)").foregroundStyle(.secondary); Spacer(); Button("Настроить") { calendarDraft = calendar }; Button("Удалить",role:.destructive) {
+                    if w.plan.resources.contains(where:{ $0.calendarID == calendar.id }) { w.error = "Сначала снимите назначения календаря с ресурсов" }
+                    else { w.change { $0.resourceCalendars?.removeAll { $0.id == calendar.id } } }
+                } }
+            }
+        }.sheet(item:$calendarDraft) { calendar in ResourceCalendarEditor(calendar:calendar) }
     }
 }
 struct ResourceEditorRow: View {
@@ -437,15 +458,25 @@ struct ResourceEditorRow: View {
         w.change { p in if let i = p.resources.firstIndex(where:{ $0.id == resource.id }) { p.resources[i].name = name; p.resources[i].capacity = c; p.resources[i].dailyRate = r; p.resources[i].productivity = Double(text) } }
     }
     var body: some View {
+        VStack(alignment:.leading,spacing:6) {
         HStack {
             TextField("Название",text:$name).frame(width:200).onSubmit { commit() }
             Picker("Тип ресурса",selection:Binding(get:{ resource.typeID ?? "" },set:{ value in w.change { p in if let i = p.resources.firstIndex(where:{ $0.id == resource.id }) { p.resources[i].typeID = value.isEmpty ? nil : value; if value.isEmpty { p.resources[i].productivity = nil } } } })) { Text("Не задан").tag(""); ForEach(w.plan.resourceTypes) { Text($0.name).tag($0.id) } }.labelsHidden().frame(width:180)
             TextField("Доступно",text:$capacity).frame(width:80).onSubmit { commit() }
             Text(symbol(type?.unitID)).frame(width:70)
             TextField("Производительность",text:$productivity).frame(width:130).disabled(type == nil).onSubmit { commit() }
-            Text(symbol(type?.outputUnitID)+"/дн.").frame(width:100)
+            Text(symbol(type?.outputUnitID)+(resource.timeUnit == "hour" ? "/ч" : "/дн.")).frame(width:100)
             TextField("Ставка",text:$rate).frame(width:110).onSubmit { commit() }
             Button(role:.destructive) { if w.plan.activities.contains(where:{ $0.resource == resource.id }) { w.error = "Сначала снимите назначения этого ресурса" } else { w.change { $0.resources.removeAll { $0.id == resource.id } } } } label: { Image(systemName:"trash") }
+        }
+        HStack {
+            Picker("Календарь ресурса",selection:Binding(get:{ resource.calendarID ?? "" },set:{ value in w.change { p in if let i = p.resources.firstIndex(where:{ $0.id == resource.id }) { p.resources[i].calendarID = value.isEmpty ? nil : value } } })) {
+                Text("Календарь проекта · 8 ч/день").tag("")
+                ForEach(w.plan.resourceCalendars ?? []) { Text($0.name).tag($0.id) }
+            }.frame(width:430)
+            Picker("Учёт выработки и ставки",selection:Binding(get:{ resource.timeUnit ?? "day" },set:{ value in w.change { p in if let i = p.resources.firstIndex(where:{ $0.id == resource.id }) { p.resources[i].timeUnit = value } } })) { Text("За день (8 ч)").tag("day"); Text("За час").tag("hour") }.frame(width:350)
+        }.font(.caption)
+        Divider()
         }.onAppear { sync() }.onChange(of:resource) { _,_ in sync() }
     }
 }
@@ -456,7 +487,10 @@ struct SettingsView: View {
         VStack(alignment:.leading,spacing:18) {
             Text("Параметры проекта").font(.headline)
             TextField("Название",text:$name); TextField("Начало, ГГГГ-ММ-ДД",text:$start)
-            Text("Рабочая неделя: понедельник–пятница. Часовой пояс: \(w.plan.calendar.timezone). Другие дни недели можно задать в файле проекта.").foregroundStyle(.secondary)
+            HStack { Text("Рабочие дни проекта:"); ForEach(Array(zip([2,3,4,5,6,7,1],["Пн","Вт","Ср","Чт","Пт","Сб","Вс"])),id:\.0) { day,title in
+                Toggle(title,isOn:Binding(get:{ w.plan.calendar.weekdays.contains(day) },set:{ enabled in w.change { plan in if enabled { plan.calendar.weekdays.append(day); plan.calendar.weekdays.sort() } else { plan.calendar.weekdays.removeAll { $0 == day } } } })).toggleStyle(.checkbox)
+            } }
+            Text("Часовой пояс: \(w.plan.calendar.timezone). Изменение календаря проекта сдвигает шкалу рабочих дней; проверьте фиксированные даты.").foregroundStyle(.secondary)
             TextField("Нерабочие даты через запятую",text:$holidays)
             Button("Применить") { w.change { $0.name = name; $0.startDate = start; $0.calendar.holidays = holidays.split(separator:",").map { $0.trimmingCharacters(in:.whitespaces) } } }
             Divider()
@@ -665,13 +699,14 @@ struct ResourceLoadPanel: View {
                     ForEach(plan.resources) { resource in
                         let type = plan.resourceTypes.first { $0.id == resource.typeID }
                         let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol ?? "ед."
+                        let loads = Planner.loads(resource:resource,days:days,plan:plan,result:result)
                         HStack(spacing:0) {
-                            HStack { Text(resource.name).bold(); Text("Доступно: \(resource.capacity.formatted())").foregroundStyle(.secondary); if let p = resource.productivity { Text("Выработка: \(p.formatted()) \(symbol)/дн. на единицу; мощность \((p*resource.capacity).formatted()) \(symbol)/дн.").foregroundStyle(.secondary) }; Spacer() }.font(.caption).padding(.leading,10).frame(width:tableWidth)
+                            HStack { Text(resource.name).bold(); Text("Доступно: \(resource.capacity.formatted())").foregroundStyle(.secondary); if let p = resource.productivity { Text("Выработка: \(p.formatted()) \(symbol)/\(resource.timeUnit == "hour" ? "ч" : "дн") на единицу").foregroundStyle(.secondary) }; Spacer() }.font(.caption).padding(.leading,10).frame(width:tableWidth)
                             HStack(spacing:0) {
                                 ForEach(0..<days,id:\.self) { day in
-                                    let load = Planner.load(resource:resource,day:day,plan:plan,result:result)
-                                    let ratio = load.quantity/load.capacity
-                                    VStack(spacing:1) { if dayWidth > 28 { Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)) }; if dayWidth > 50 && load.output > 0 { Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)) } }.frame(width:dayWidth,height:33).background(ratio > 1.000001 ? Color.orange.opacity(0.75) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65)))).overlay { Rectangle().stroke(Color.secondary.opacity(0.1),lineWidth:0.5) }.help("\(Planner.date(day,plan:plan)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); плановая выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн.")
+                                    let load = loads[day]
+                                    let ratio = load.capacity > 0 ? load.quantity/load.capacity : 0
+                                    VStack(spacing:1) { if dayWidth > 28 { Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)) }; if dayWidth > 50 && load.output > 0 { Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)) } }.frame(width:dayWidth,height:33).background(ratio > 1.000001 ? Color.orange.opacity(0.75) : (load.capacity == 0 ? Color.secondary.opacity(0.16) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65))))).overlay { Rectangle().stroke(Color.secondary.opacity(0.1),lineWidth:0.5) }.help("\(Planner.date(day,plan:plan)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); \(load.capacity == 0 ? "Нерабочий день; " : "")плановая выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн.")
                                 }
                             }.frame(width:chartWidth,alignment:.leading)
                         }.frame(height:34)

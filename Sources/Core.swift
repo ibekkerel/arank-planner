@@ -36,6 +36,8 @@ struct Resource: Codable, Identifiable, Equatable {
     var dailyRate: Double = 0
     var typeID: String? = nil
     var productivity: Double? = nil
+    var calendarID: String? = nil
+    var timeUnit: String? = nil
 }
 struct MeasurementUnit: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
@@ -58,7 +60,7 @@ struct WorkCalendar: Codable, Equatable {
 struct BaselineItem: Codable, Equatable { var start: Int; var finish: Int }
 struct Schedule: Codable, Equatable {
     var format: String = "OpenSchedule"
-    var version: String = "0.5"
+    var version: String = "0.6"
     var id: String = UUID().uuidString
     var name: String
     var startDate: String = "2026-11-09"
@@ -70,6 +72,7 @@ struct Schedule: Codable, Equatable {
     var baseline: [String:BaselineItem] = [:]
     var unitCatalog: [MeasurementUnit]? = nil
     var typeCatalog: [ResourceType]? = nil
+    var resourceCalendars: [ResourceCalendar]? = nil
     var levelResources: Bool? = true
     static var demo: Schedule {
         Schedule(name: "Строительство · корпус А", activities: [
@@ -91,8 +94,8 @@ enum PlanError: LocalizedError {
     var errorDescription: String? { if case .invalid(let s) = self { return s }; return nil }
 }
 struct Planner {
-    static func calculate(_ plan: Schedule) throws -> Calculation {
-        guard plan.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5"].contains(plan.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
+    static func calculate(_ plan: Schedule, applyResourceCalendars: Bool = true) throws -> Calculation {
+        guard plan.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5","0.6"].contains(plan.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
         guard !plan.calendar.weekdays.isEmpty, Set(plan.calendar.weekdays).count == plan.calendar.weekdays.count, plan.calendar.weekdays.allSatisfy({(1...7).contains($0)}), TimeZone(identifier: plan.calendar.timezone) != nil else { throw PlanError.invalid("Неверный рабочий календарь") }
         guard validDate(plan.startDate), plan.calendar.holidays.allSatisfy(validDate) else { throw PlanError.invalid("Дата должна иметь вид ГГГГ-ММ-ДД") }
         let ids = plan.activities.map(\.id)
@@ -106,6 +109,7 @@ struct Planner {
             if let id = resource.typeID { guard types.contains(where:{ $0.id == id }) else { throw PlanError.invalid("Неизвестный тип ресурса") } }
             if let value = resource.productivity { guard value.isFinite, value > 0, resource.typeID != nil else { throw PlanError.invalid("Для производительности ресурса нужны тип и значение > 0") } }
         }
+        try ResourceCalendar.validate(plan)
         let resources = Dictionary(uniqueKeysWithValues: plan.resources.map { ($0.id,$0) })
         for a in plan.activities {
             guard a.duration >= 0, a.duration <= 100000, a.progress.isFinite, (0...100).contains(a.progress), a.units.isFinite, a.units > 0, a.resource.isEmpty || resources[a.resource] != nil else { throw PlanError.invalid("Неверные параметры работы \(a.id)") }
@@ -153,6 +157,9 @@ struct Planner {
             for l in outgoing[id,default:[]] { indegree[l.to]! -= 1; if indegree[l.to] == 0 { queue.append(l.to) } }
         }
         guard order.count == executableIDs.count else { throw PlanError.invalid("Обнаружен цикл зависимостей. Удалите замыкающую связь.") }
+        if applyResourceCalendars && plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) {
+            return try CalendarScheduler.calculate(plan)
+        }
         func weight(_ l: Link) -> Int {
             let a = plan.duration(of:tasks[l.from]!), b = plan.duration(of:tasks[l.to]!)
             switch l.type { case "SS": return l.lag; case "FF": return a - b + l.lag; case "SF": return -b + l.lag; default: return a + l.lag }
@@ -267,16 +274,27 @@ struct Planner {
         // Unknown fields must not be silently dropped by this version.
         let root = try JSONSerialization.jsonObject(with:data) as? [String:Any] ?? [:]
         func check(_ object: [String:Any], allowed: Set<String>) throws { let unknown = Set(object.keys).subtracting(allowed); if !unknown.isEmpty { throw PlanError.invalid("Неизвестные поля: \(unknown.sorted().joined(separator:", ")). Файл не изменён.") } }
-        try check(root,allowed:["format","version","id","name","startDate","currency","calendar","activities","links","resources","baseline","unitCatalog","typeCatalog","levelResources"])
-        for (key,fields) in [("activities",Set(["id","name","duration","progress","resource","units","volume","productivity","ifcGlobalIds","kind","parent","volumeUnit","earliestStart","requestedStart","requestedFinish","lockStart","lockFinish","priority"])),("links",Set(["id","from","to","type","lag"])),("resources",Set(["id","name","capacity","dailyRate","typeID","productivity"])),("unitCatalog",Set(["id","name","symbol"])),("typeCatalog",Set(["id","name","unitID","outputUnitID"]))] {
+        try check(root,allowed:["format","version","id","name","startDate","currency","calendar","activities","links","resources","baseline","unitCatalog","typeCatalog","levelResources","resourceCalendars"])
+        for (key,fields) in [("activities",Set(["id","name","duration","progress","resource","units","volume","productivity","ifcGlobalIds","kind","parent","volumeUnit","earliestStart","requestedStart","requestedFinish","lockStart","lockFinish","priority"])),("links",Set(["id","from","to","type","lag"])),("resources",Set(["id","name","capacity","dailyRate","typeID","productivity","calendarID","timeUnit"])),("unitCatalog",Set(["id","name","symbol"])),("typeCatalog",Set(["id","name","unitID","outputUnitID"]))] {
             for obj in root[key] as? [[String:Any]] ?? [] { try check(obj,allowed:fields) }
+        }
+        for obj in root["resourceCalendars"] as? [[String:Any]] ?? [] {
+            try check(obj,allowed:["id","name","week","exceptions"])
+            for day in obj["week"] as? [[String:Any]] ?? [] {
+                try check(day,allowed:["weekday","intervals"])
+                for interval in day["intervals"] as? [[String:Any]] ?? [] { try check(interval,allowed:["start","end"]) }
+            }
+            for exception in obj["exceptions"] as? [[String:Any]] ?? [] {
+                try check(exception,allowed:["id","name","from","through","kind","intervals"])
+                for interval in exception["intervals"] as? [[String:Any]] ?? [] { try check(interval,allowed:["start","end"]) }
+            }
         }
         if let calendar = root["calendar"] as? [String:Any] { try check(calendar,allowed:["timezone","weekdays","holidays"]) }
         if let baseline = root["baseline"] as? [String:[String:Any]] { for obj in baseline.values { try check(obj,allowed:["start","finish"]) } }
         var p = try JSONDecoder().decode(Schedule.self,from:data)
-        guard p.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5"].contains(p.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
+        guard p.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5","0.6"].contains(p.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
         for i in p.activities.indices { if p.activities[i].kind == nil { p.activities[i].kind = p.activities[i].duration == 0 ? "milestone" : "task" } }
-        p.version = "0.5"
+        p.version = "0.6"
         if p.unitCatalog == nil {
             var units = MeasurementUnit.defaults
             for symbol in p.activities.compactMap(\.volumeUnit) where !units.contains(where:{ $0.symbol == symbol }) { units.append(MeasurementUnit(name:symbol,symbol:symbol)) }
@@ -287,7 +305,7 @@ struct Planner {
     static func save(_ plan: Schedule, to url: URL) throws {
         _ = try calculate(plan)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
-        var normalized = plan; normalized.version = "0.5"
+        var normalized = plan; normalized.version = "0.6"
         for i in normalized.activities.indices { normalized.activities[i].kind = normalized.activities[i].entityType }
         normalized.unitCatalog = plan.measurementUnits; normalized.typeCatalog = plan.resourceTypes; normalized.levelResources = plan.levelResources ?? true
         try encoder.encode(normalized).write(to:url,options:.atomic)
@@ -328,7 +346,7 @@ extension Schedule {
         guard let volume = activity.volume else { return activity.duration }
         let rate: Double?
         if let explicit = activity.productivity { rate = explicit }
-        else if let resource = resources.first(where:{ $0.id == activity.resource }), let productivity = resource.productivity { rate = productivity * activity.units }
+        else if let resource = resources.first(where:{ $0.id == activity.resource }), let productivity = resource.productivity { rate = productivity * activity.units * (resource.timeUnit == "hour" ? 8 : 1) }
         else { rate = nil }
         guard let rate, rate.isFinite, rate > 0 else { return activity.duration }
         let value = ceil(volume/rate)
@@ -397,6 +415,7 @@ struct ResourceDay {
 }
 extension Planner {
     static func load(resource:Resource,day:Int,plan:Schedule,result:Calculation) -> ResourceDay {
+        if plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) { return CalendarScheduler.load(resource:resource,day:day,plan:plan,result:result) }
         var quantity = 0.0, output = 0.0
         let type = plan.resourceTypes.first { $0.id == resource.typeID }
         let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol
@@ -445,5 +464,216 @@ struct TimelineCalendar {
             dates.append(date); current = calendar.date(byAdding:.day,value:1,to:current)!
         }
         self.dates = dates; self.years = years; self.months = months
+    }
+}
+
+struct WorkInterval:Codable,Equatable {
+    var start:Int = 540
+    var end:Int = 1020
+    static func parse(_ text:String) throws -> [WorkInterval] {
+        if text.trimmingCharacters(in:.whitespaces).isEmpty { return [] }
+        func minute(_ value:Substring) throws -> Int {
+            let parts = value.trimmingCharacters(in:.whitespaces).split(separator:":")
+            guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]), (0...24).contains(h), (0...59).contains(m), h < 24 || m == 0 else { throw PlanError.invalid("Время: ЧЧ:ММ, например 09:00-13:00, 14:00-18:00") }
+            return h*60+m
+        }
+        return try text.replacingOccurrences(of:"–",with:"-").split(separator:",").map { part in
+            let pair = part.split(separator:"-"); guard pair.count == 2 else { throw PlanError.invalid("Интервал: 09:00-18:00") }
+            return WorkInterval(start:try minute(pair[0]),end:try minute(pair[1]))
+        }
+    }
+    static func text(_ intervals:[WorkInterval]) -> String { intervals.map { String(format:"%02d:%02d-%02d:%02d",$0.start/60,$0.start%60,$0.end/60,$0.end%60) }.joined(separator:", ") }
+}
+struct ResourceWorkday:Codable,Equatable {
+    var weekday:Int
+    var intervals:[WorkInterval]
+}
+struct CalendarException:Codable,Identifiable,Equatable {
+    var id:String = UUID().uuidString
+    var name:String = "Исключение"
+    var from:String
+    var through:String
+    var kind:String = "vacation"
+    var intervals:[WorkInterval] = []
+}
+struct ResourceCalendar:Codable,Identifiable,Equatable {
+    var id:String = UUID().uuidString
+    var name:String = "Новый календарь"
+    var week:[ResourceWorkday] = (1...7).map { ResourceWorkday(weekday:$0,intervals:(2...6).contains($0) ? [WorkInterval(start:540,end:780),WorkInterval(start:840,end:1080)] : []) }
+    var exceptions:[CalendarException] = []
+    func hours(date:String) -> Double {
+        let parts = date.split(separator:"-").compactMap { Int($0) }
+        var c = Calendar(identifier:.gregorian); c.timeZone = TimeZone(secondsFromGMT:0)!
+        guard parts.count == 3, let d = c.date(from:DateComponents(year:parts[0],month:parts[1],day:parts[2])) else { return 0 }
+        let intervals:[WorkInterval]
+        if let exception = exceptions.last(where:{ $0.from <= date && date <= $0.through }) { intervals = exception.kind == "working" ? exception.intervals : [] }
+        else { intervals = week.first { $0.weekday == c.component(.weekday,from:d) }?.intervals ?? [] }
+        return Double(intervals.reduce(0) { $0 + $1.end-$1.start })/60
+    }
+    static func validate(_ plan:Schedule) throws {
+        let calendars = plan.resourceCalendars ?? []
+        guard Set(calendars.map(\.id)).count == calendars.count else { throw PlanError.invalid("Повторяющиеся коды календарей") }
+        func validateIntervals(_ intervals:[WorkInterval]) throws {
+            var previous = 0
+            for i in intervals.sorted(by:{ $0.start < $1.start }) {
+                guard i.start >= previous, i.start >= 0, i.end <= 1440, i.end > i.start else { throw PlanError.invalid("Рабочие интервалы должны быть в пределах суток и не пересекаться") }
+                previous = i.end
+            }
+        }
+        for calendar in calendars {
+            guard !calendar.id.isEmpty, !calendar.name.trimmingCharacters(in:.whitespaces).isEmpty, calendar.week.count == 7, Set(calendar.week.map(\.weekday)) == Set(1...7), calendar.week.contains(where:{ !$0.intervals.isEmpty }) else { throw PlanError.invalid("Задайте название календаря и хотя бы один рабочий день недели") }
+            for day in calendar.week { try validateIntervals(day.intervals) }
+            guard Set(calendar.exceptions.map(\.id)).count == calendar.exceptions.count else { throw PlanError.invalid("Повторяющиеся исключения календаря") }
+            for exception in calendar.exceptions {
+                guard Planner.validDate(exception.from), Planner.validDate(exception.through), exception.from <= exception.through, ["vacation","holiday","off","working"].contains(exception.kind) else { throw PlanError.invalid("Проверьте период и тип исключения календаря") }
+                try validateIntervals(exception.intervals)
+                if exception.kind == "working" && exception.intervals.isEmpty { throw PlanError.invalid("Для рабочего исключения задайте часы") }
+            }
+        }
+        for resource in plan.resources {
+            guard resource.timeUnit == nil || ["day","hour"].contains(resource.timeUnit!) else { throw PlanError.invalid("Учёт ресурса: день или час") }
+            if let id = resource.calendarID, !calendars.contains(where:{ $0.id == id }) { throw PlanError.invalid("Календарь ресурса не найден") }
+        }
+    }
+}
+
+// The scheduling axis remains project working days. Shifts determine usable hours
+// inside each axis day; non-project-working dates never acquire capacity.
+final class ResourceAvailability {
+    let plan:Schedule
+    private var dates:[String] = []
+    private let formatter:DateFormatter
+    private var calendar:Calendar
+    private var current:Date
+    init(_ plan:Schedule) {
+        self.plan = plan
+        formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX"); formatter.timeZone = TimeZone(identifier:plan.calendar.timezone); formatter.dateFormat = "yyyy-MM-dd"
+        calendar = Calendar(identifier:.gregorian); calendar.timeZone = formatter.timeZone
+        current = formatter.date(from:plan.startDate)!
+    }
+    func date(_ day:Int) -> String {
+        while dates.count <= day {
+            let text = formatter.string(from:current)
+            if plan.calendar.weekdays.contains(calendar.component(.weekday,from:current)) && !plan.calendar.holidays.contains(text) { dates.append(text) }
+            current = calendar.date(byAdding:.day,value:1,to:current)!
+        }
+        return dates[day]
+    }
+    func hours(_ resource:Resource,day:Int) -> Double {
+        guard let id = resource.calendarID, let resourceCalendar = plan.resourceCalendars?.first(where:{ $0.id == id }) else { return 8 }
+        return resourceCalendar.hours(date:date(day))
+    }
+}
+struct CalendarWorkDay {
+    let day:Int
+    let hours:Double
+    let output:Double
+}
+enum CalendarScheduler {
+    static func work(_ task:Activity,resource:Resource,start:Int,availability:ResourceAvailability) throws -> [CalendarWorkDay] {
+        guard task.entityType == "task" else { return [] }
+        if let calendar = availability.plan.resourceCalendars?.first(where:{ $0.id == resource.calendarID }),
+           !calendar.week.contains(where:{ availability.plan.calendar.weekdays.contains($0.weekday) && !$0.intervals.isEmpty }),
+           !calendar.exceptions.contains(where:{ $0.kind == "working" }) { throw PlanError.invalid("У календарей проекта и ресурса \(resource.name) нет общих рабочих дней") }
+        let outputRate = task.productivity.map { $0/8 } ?? resource.productivity.map { $0 * task.units / (resource.timeUnit == "hour" ? 1 : 8) }
+        let byVolume = task.volume != nil && outputRate != nil
+        var remaining = byVolume ? task.volume! : Double(task.duration)*8
+        if remaining <= 0 { return [] }
+        var days:[CalendarWorkDay] = [], day = start
+        while remaining > 0.0000001 {
+            guard day-start < 100000, day <= 200000 else { throw PlanError.invalid("Не найдено рабочее время ресурса для задачи \(task.id) в пределах 100000 дней") }
+            let hours = availability.hours(resource,day:day)
+            let rate = byVolume ? outputRate! : 1
+            if hours > 0 {
+                let used = min(hours,remaining/rate)
+                days.append(CalendarWorkDay(day:day,hours:used,output:byVolume ? used*rate : 0)); remaining -= used*rate
+            }
+            day += 1
+        }
+        return days
+    }
+    static func calculate(_ plan:Schedule) throws -> Calculation {
+        let availability = ResourceAvailability(plan)
+        let resources = Dictionary(uniqueKeysWithValues:plan.resources.map { ($0.id,$0) })
+        var staged = plan
+        // Materialise each calendar span into the existing checked date/link solver.
+        // Re-run until all spans and starts agree; reject rather than return a stale plan.
+        for i in staged.activities.indices { staged.activities[i].requestedFinish = nil; staged.activities[i].lockFinish = nil }
+        var result = try Planner.calculate(staged,applyResourceCalendars:false)
+        for _ in 0..<128 {
+            var next = plan
+            for index in next.activities.indices {
+                let task = plan.activities[index]
+                guard task.entityType == "task", let resource = resources[task.resource] else { continue }
+                var oldStart = result.timings[task.id]!.start
+                if task.lockFinish == true, let finish = task.requestedFinish {
+                    let end = try Planner.offset(for:finish,plan:plan)
+                    guard availability.hours(resource,day:end) > 0 else { throw PlanError.invalid("Фиксированное окончание задачи \(task.id) попадает на нерабочий день ресурса") }
+                    let hourlyRate = task.productivity.map { $0/8 } ?? resource.productivity.map { $0*task.units/(resource.timeUnit == "hour" ? 1 : 8) }
+                    var remaining = task.volume != nil && hourlyRate != nil ? task.volume! : Double(task.duration)*8
+                    var day = end
+                    while remaining > 0.0000001 && day >= 0 {
+                        remaining -= availability.hours(resource,day:day) * (task.volume != nil && hourlyRate != nil ? hourlyRate! : 1)
+                        oldStart = day; day -= 1
+                    }
+                    guard remaining <= 0.0000001 else { throw PlanError.invalid("Недостаточно рабочего времени до фиксированного окончания задачи \(task.id)") }
+                }
+                let profile = try work(task,resource:resource,start:oldStart,availability:availability)
+                guard let first = profile.first, let last = profile.last else { continue }
+                // Use plain duration to avoid applying volume conversion a second time.
+                next.activities[index].volume = nil; next.activities[index].productivity = nil
+                next.activities[index].duration = last.day-first.day+1
+                next.activities[index].earliestStart = max(task.earliestStart ?? 0,first.day)
+            }
+            let candidate = try Planner.calculate(next,applyResourceCalendars:false)
+            var consistent = true
+            for task in plan.activities where task.entityType == "task" {
+                guard let resource = resources[task.resource], let timing = candidate.timings[task.id] else { continue }
+                let profile = try work(task,resource:resource,start:timing.start,availability:availability)
+                if let first = profile.first, let last = profile.last, first.day != timing.start || last.day+1 != timing.finish { consistent = false; break }
+            }
+            if consistent {
+                var answer = candidate
+                answer.cost = 0
+                for task in plan.activities {
+                    guard let resource = resources[task.resource], let timing = answer.timings[task.id] else { continue }
+                    let profile = try work(task,resource:resource,start:timing.start,availability:availability)
+                    let hours = profile.reduce(0) { $0+$1.hours }
+                    answer.cost += hours * task.units * resource.dailyRate / (resource.timeUnit == "hour" ? 1 : 8)
+                }
+                return answer
+            }
+            result = candidate; staged = next
+        }
+        throw PlanError.invalid("Календари и ограничения не сошлись. Проверьте фиксированные даты, связи и доступность ресурсов.")
+    }
+    static func load(resource:Resource,day:Int,plan:Schedule,result:Calculation) -> ResourceDay {
+        let availability = ResourceAvailability(plan)
+        let hours = availability.hours(resource,day:day)
+        var quantity = 0.0, output = 0.0
+        for task in plan.activities where task.resource == resource.id {
+            guard let timing = result.timings[task.id], timing.start <= day, day < timing.finish,
+                  let profile = try? work(task,resource:resource,start:timing.start,availability:availability),
+                  let item = profile.first(where:{ $0.day == day }) else { continue }
+            quantity += task.units; output += item.output
+        }
+        let factor = resource.timeUnit == "hour" ? hours : hours/8
+        return ResourceDay(quantity:quantity,capacity:hours > 0 ? resource.capacity : 0,output:output,outputCapacity:resource.productivity.map { $0*resource.capacity*factor })
+    }
+}
+
+extension Planner {
+    static func loads(resource:Resource,days:Int,plan:Schedule,result:Calculation) -> [ResourceDay] {
+        guard plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) else { return (0..<days).map { load(resource:resource,day:$0,plan:plan,result:result) } }
+        let availability = ResourceAvailability(plan)
+        var quantity = Array(repeating:0.0,count:days), output = quantity
+        for task in plan.activities where task.resource == resource.id {
+            guard let timing = result.timings[task.id], let profile = try? CalendarScheduler.work(task,resource:resource,start:timing.start,availability:availability) else { continue }
+            for item in profile where item.day < days { quantity[item.day] += task.units; output[item.day] += item.output }
+        }
+        return (0..<days).map { day in
+            let hours = availability.hours(resource,day:day)
+            return ResourceDay(quantity:quantity[day],capacity:hours > 0 ? resource.capacity : 0,output:output[day],outputCapacity:resource.productivity.map { $0*resource.capacity*(resource.timeUnit == "hour" ? hours : hours/8) })
+        }
     }
 }

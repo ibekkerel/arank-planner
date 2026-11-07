@@ -1,0 +1,208 @@
+{
+  "activities" : [
+    {
+      "duration" : 2,
+      "id" : "a",
+      "ifcGlobalIds" : [
+
+      ],
+      "kind" : "task",
+      "name" : "Task",
+      "progress" : 0,
+      "resource" : "r",
+      "units" : 1,
+      "volume" : 100,
+      "volumeUnit" : "м³"
+    }
+  ],
+  "baseline" : {
+
+  },
+  "calendar" : {
+    "holidays" : [
+
+    ],
+    "timezone" : "Europe/Moscow",
+    "weekdays" : [
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "currency" : "RUB",
+  "format" : "OpenSchedule",
+  "id" : "511B8FD9-E86A-43CA-9F27-CA6DA962AC43",
+  "levelResources" : false,
+  "links" : [
+
+  ],
+  "name" : "Calendar test",
+  "resourceCalendars" : [
+    {
+      "exceptions" : [
+        {
+          "from" : "2026-11-10",
+          "id" : "ADEC6E03-10A3-45CC-A9FE-17A17F1B1443",
+          "intervals" : [
+
+          ],
+          "kind" : "vacation",
+          "name" : "Vacation",
+          "through" : "2026-11-11"
+        },
+        {
+          "from" : "2026-11-11",
+          "id" : "DBD65FF9-80E4-4F75-A368-2014828786FD",
+          "intervals" : [
+            {
+              "end" : 1020,
+              "start" : 540
+            }
+          ],
+          "kind" : "working",
+          "name" : "Extra shift",
+          "through" : "2026-11-11"
+        }
+      ],
+      "id" : "rc",
+      "name" : "Test shifts",
+      "week" : [
+        {
+          "intervals" : [
+
+          ],
+          "weekday" : 1
+        },
+        {
+          "intervals" : [
+            {
+              "end" : 780,
+              "start" : 540
+            }
+          ],
+          "weekday" : 2
+        },
+        {
+          "intervals" : [
+            {
+              "end" : 780,
+              "start" : 540
+            }
+          ],
+          "weekday" : 3
+        },
+        {
+          "intervals" : [
+            {
+              "end" : 780,
+              "start" : 540
+            }
+          ],
+          "weekday" : 4
+        },
+        {
+          "intervals" : [
+            {
+              "end" : 780,
+              "start" : 540
+            }
+          ],
+          "weekday" : 5
+        },
+        {
+          "intervals" : [
+            {
+              "end" : 780,
+              "start" : 540
+            }
+          ],
+          "weekday" : 6
+        },
+        {
+          "intervals" : [
+
+          ],
+          "weekday" : 7
+        }
+      ]
+    }
+  ],
+  "resources" : [
+    {
+      "calendarID" : "rc",
+      "capacity" : 1,
+      "dailyRate" : 100,
+      "id" : "r",
+      "name" : "Worker",
+      "productivity" : 80,
+      "timeUnit" : "day",
+      "typeID" : "team"
+    }
+  ],
+  "startDate" : "2026-11-09",
+  "typeCatalog" : [
+    {
+      "id" : "labor",
+      "name" : "Трудовой ресурс",
+      "outputUnitID" : "piece",
+      "unitID" : "person"
+    },
+    {
+      "id" : "equipment",
+      "name" : "Механизм",
+      "outputUnitID" : "m3",
+      "unitID" : "machine"
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "outputUnitID" : "m3",
+      "unitID" : "team"
+    }
+  ],
+  "unitCatalog" : [
+    {
+      "id" : "m3",
+      "name" : "Кубический метр",
+      "symbol" : "м³"
+    },
+    {
+      "id" : "m2",
+      "name" : "Квадратный метр",
+      "symbol" : "м²"
+    },
+    {
+      "id" : "m",
+      "name" : "Метр",
+      "symbol" : "м"
+    },
+    {
+      "id" : "piece",
+      "name" : "Штука",
+      "symbol" : "шт."
+    },
+    {
+      "id" : "person",
+      "name" : "Человек",
+      "symbol" : "чел."
+    },
+    {
+      "id" : "machine",
+      "name" : "Машина",
+      "symbol" : "маш."
+    },
+    {
+      "id" : "team",
+      "name" : "Бригада",
+      "symbol" : "бриг."
+    },
+    {
+      "id" : "ton",
+      "name" : "Тонна",
+      "symbol" : "т"
+    }
+  ],
+  "version" : "0.6"
+}

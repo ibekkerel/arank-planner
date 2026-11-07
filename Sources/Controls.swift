@@ -135,3 +135,49 @@ struct ScheduleColumn:Identifiable {
 extension View {
     @ViewBuilder func optionalColumn(_ visible:Bool) -> some View { if visible { self } }
 }
+
+struct GraphScaleSettings:View {
+    @Binding var fit:Bool
+    @Binding var zoom:Double
+    var body:some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text("Масштаб графика").font(.headline)
+            Toggle("Весь проект по ширине окна",isOn:$fit)
+            HStack {
+                Button("Дни") { fit = false; zoom = 32 }
+                Button("Недели") { fit = false; zoom = 10 }
+                Button("Месяцы") { fit = false; zoom = 3 }
+            }
+            Text("Ширина рабочего дня: \(zoom.formatted(.number.precision(.fractionLength(0)))) пт")
+            Slider(value:Binding(get:{ zoom },set:{ zoom = $0; fit = false }),in:2...160).accessibilityLabel("Ширина рабочего дня")
+            HStack { Button("−") { fit = false; zoom = max(2,zoom/1.25) }; Button("+") { fit = false; zoom = min(160,zoom*1.25) }; Spacer(); Button("Сбросить") { fit = true; zoom = 24 } }
+            Text("В ручном масштабе прокручивайте график горизонтально. Панель загрузки закреплена снизу и следует за шкалой по горизонтали.").font(.caption).foregroundStyle(.secondary)
+        }.padding(20).frame(width:350)
+    }
+}
+
+struct HorizontalScrollObserver:NSViewRepresentable {
+    let changed:(CGFloat)->Void
+    func makeNSView(context:Context) -> ScrollObserverSurface { ScrollObserverSurface() }
+    func updateNSView(_ view:ScrollObserverSurface,context:Context) { view.changed = changed; view.attach() }
+}
+final class ScrollObserverSurface:NSView {
+    var changed:((CGFloat)->Void)?
+    private var token:NSObjectProtocol?
+    private weak var observed:NSClipView?
+    override func hitTest(_ point:NSPoint) -> NSView? { nil }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); attach() }
+    func attach() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let clip = self.enclosingScrollView?.contentView, self.observed !== clip else { return }
+            if let token = self.token { NotificationCenter.default.removeObserver(token) }
+            self.observed = clip; clip.postsBoundsChangedNotifications = true
+            self.changed?(clip.bounds.origin.x)
+            self.token = NotificationCenter.default.addObserver(forName:NSView.boundsDidChangeNotification,object:clip,queue:.main) { [weak self,weak clip] _ in
+                guard let clip else { return }; let x = clip.bounds.origin.x
+                DispatchQueue.main.async { self?.changed?(x) }
+            }
+        }
+    }
+    deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+}

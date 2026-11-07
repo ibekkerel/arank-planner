@@ -33,7 +33,7 @@
   },
   "currency" : "RUB",
   "format" : "OpenSchedule",
-  "id" : "09918FF9-3C37-4382-82EB-74D8F3913D24",
+  "id" : "3B0C2B4E-DBB1-4B27-9FEB-C716AE440D21",
   "levelResources" : true,
   "links" : [
 
@@ -112,5 +112,5 @@
       "symbol" : "т"
     }
   ],
-  "version" : "0.5"
+  "version" : "0.6"
 }

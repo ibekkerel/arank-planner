@@ -50,7 +50,7 @@ let reloadedHierarchy = try Planner.load(u); expect(reloadedHierarchy.activities
 var future = try JSONSerialization.jsonObject(with:Data(contentsOf:u)) as! [String:Any]; future["version"] = "99"; try JSONSerialization.data(withJSONObject:future).write(to:u)
 do { _ = try Planner.load(u); fatalError("accepted future version") } catch { checks += 1 }
 var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(Schedule.demo)) as! [String:Any]; legacy["version"] = "0.1"; try JSONSerialization.data(withJSONObject:legacy).write(to:u)
-let migrated = try Planner.load(u); expect(migrated.version == "0.5" && migrated.activities.last!.entityType == "milestone","legacy migration")
+let migrated = try Planner.load(u); expect(migrated.version == "0.6" && migrated.activities.last!.entityType == "milestone","legacy migration")
 try Planner.save(Schedule.demo,to:u)
 try Planner.save(hierarchy,to:u.deletingLastPathComponent().appendingPathComponent("hierarchy.osched"))
 var quantities = Schedule.demo
@@ -151,4 +151,76 @@ let scale = TimelineCalendar(plan:scalePlan,count:5)
 expect(scale.dates == ["2026-12-30","2026-12-31","2027-01-01","2027-01-04","2027-01-05"],"timeline working dates")
 expect(scale.years.map(\.label) == ["2026","2027"] && scale.years.map(\.count) == [2,3],"timeline year boundary")
 expect(scale.months.map(\.label) == ["Декабрь","Январь"] && scale.months[1].start == 2,"timeline month boundary")
+
+
+var resourceCalendar = ResourceCalendar(id:"rc",name:"Test shifts")
+resourceCalendar.week = (1...7).map { ResourceWorkday(weekday:$0,intervals:(2...6).contains($0) ? [WorkInterval(start:540,end:780)] : []) }
+expect(resourceCalendar.hours(date:"2026-11-09") == 4,"four-hour Monday")
+expect(resourceCalendar.hours(date:"2026-11-14") == 0,"resource weekend")
+resourceCalendar.exceptions = [CalendarException(name:"Vacation",from:"2026-11-10",through:"2026-11-11")]
+expect(resourceCalendar.hours(date:"2026-11-10") == 0 && resourceCalendar.hours(date:"2026-11-11") == 0,"inclusive vacation")
+resourceCalendar.exceptions.append(CalendarException(name:"Extra shift",from:"2026-11-11",through:"2026-11-11",kind:"working",intervals:[WorkInterval(start:540,end:1020)]))
+expect(resourceCalendar.hours(date:"2026-11-11") == 8,"last exception overrides vacation")
+var calendarPlan = Schedule(name:"Calendar test",activities:[Activity(id:"a",name:"Task",duration:2,resource:"r")],links:[],resources:[Resource(id:"r",name:"Worker",dailyRate:100,calendarID:"rc")],resourceCalendars:[resourceCalendar])
+let calendarResult = try Planner.calculate(calendarPlan)
+expect(calendarResult.timings["a"]!.start == 0 && calendarResult.timings["a"]!.finish == 4,"duration consumes 16 working hours across vacation")
+expect(calendarResult.cost == 200,"cost excludes vacation")
+expect(Planner.load(resource:calendarPlan.resources[0],day:1,plan:calendarPlan,result:calendarResult).capacity == 0,"zero capacity during vacation")
+expect(Planner.load(resource:calendarPlan.resources[0],day:1,plan:calendarPlan,result:calendarResult).quantity == 0,"zero load during vacation")
+calendarPlan.activities.append(Activity(id:"b",name:"Following",duration:1))
+calendarPlan.links = [Link(from:"a",to:"b")]
+expect(try Planner.calculate(calendarPlan).timings["b"]!.start == 4,"FS follows resource calendar finish")
+calendarPlan.links[0].type = "FF"
+expect(try Planner.calculate(calendarPlan).timings["b"]!.finish == 4,"FF uses calendar span")
+calendarPlan.links[0].type = "SS"
+expect(try Planner.calculate(calendarPlan).timings["b"]!.start == 0,"SS with calendar")
+calendarPlan.links[0].type = "SF"; calendarPlan.links[0].lag = 3
+expect(try Planner.calculate(calendarPlan).timings["b"]!.finish == 3,"SF with calendar")
+calendarPlan.links = []; calendarPlan.activities.removeLast()
+calendarPlan.activities[0].requestedStart = "2026-11-10"; calendarPlan.activities[0].lockStart = true
+rejects(calendarPlan,"fixed start in vacation rejected")
+calendarPlan.activities[0].requestedStart = nil; calendarPlan.activities[0].lockStart = nil
+calendarPlan.activities[0].requestedFinish = "2026-11-12"; calendarPlan.activities[0].lockFinish = true
+expect(try Planner.calculate(calendarPlan).timings["a"]!.finish == 4,"fixed finish with calendar")
+calendarPlan.activities[0].requestedStart = "2026-11-09"; calendarPlan.activities[0].lockStart = true
+expect(try Planner.calculate(calendarPlan).timings["a"]!.start == 0,"both fixed dates fit real hours")
+calendarPlan.activities[0].requestedStart = nil; calendarPlan.activities[0].lockStart = nil
+calendarPlan.activities[0].requestedFinish = nil; calendarPlan.activities[0].lockFinish = nil
+calendarPlan.resources[0].timeUnit = "hour"; calendarPlan.resources[0].typeID = "team"; calendarPlan.resources[0].productivity = 10
+calendarPlan.activities[0].volume = 100; calendarPlan.activities[0].volumeUnit = "м³"
+let hourlyResult = try Planner.calculate(calendarPlan)
+expect(hourlyResult.timings["a"]!.finish == 3,"hourly productivity uses shifts")
+expect(hourlyResult.cost == 1000,"hourly cost uses ten working hours")
+expect(Planner.load(resource:calendarPlan.resources[0],day:2,plan:calendarPlan,result:hourlyResult).output == 60,"partial final shift output")
+calendarPlan.resources[0].timeUnit = "day"; calendarPlan.resources[0].productivity = 80
+expect(try Planner.calculate(calendarPlan).timings["a"]!.finish == 3,"daily productivity scaled from eight hours")
+calendarPlan.levelResources = false
+expect(try Planner.calculate(calendarPlan).timings["a"]!.finish == 3,"calendar applies without leveling")
+calendarPlan.resourceCalendars![0].week[1].intervals = [WorkInterval(start:540,end:800),WorkInterval(start:700,end:900)]
+rejects(calendarPlan,"overlapping shifts rejected")
+calendarPlan.resourceCalendars = [resourceCalendar]; calendarPlan.resources[0].calendarID = "missing"
+rejects(calendarPlan,"unknown resource calendar rejected")
+calendarPlan.resources[0].calendarID = "rc"
+calendarPlan.resourceCalendars![0].exceptions.append(CalendarException(from:"2026-11-20",through:"2026-11-19"))
+rejects(calendarPlan,"reversed vacation rejected")
+calendarPlan.resourceCalendars = [resourceCalendar]
+try Planner.save(calendarPlan,to:u.deletingLastPathComponent().appendingPathComponent("resource-calendars.osched"))
+let calendarReload = try Planner.load(u.deletingLastPathComponent().appendingPathComponent("resource-calendars.osched"))
+expect(calendarReload.resourceCalendars == calendarPlan.resourceCalendars && calendarReload.resources[0].calendarID == "rc" && calendarReload.version == "0.6","resource calendar roundtrip")
+expect(try WorkInterval.parse("09:00-13:00, 14:00-18:00").count == 2,"parse split shift")
+
+
+let cachedLoads = Planner.loads(resource:calendarReload.resources[0],days:5,plan:calendarReload,result:try Planner.calculate(calendarReload))
+expect(cachedLoads[1].capacity == 0 && cachedLoads[2].output == 60,"batch load profile agrees")
+var projectHoliday = calendarReload; projectHoliday.calendar.holidays = ["2026-11-11"]
+expect(try Planner.calculate(projectHoliday).timings["a"]!.finish == 4,"project holiday also removes resource working override")
+var weekendOnly = calendarReload
+weekendOnly.resourceCalendars![0].week = (1...7).map { ResourceWorkday(weekday:$0,intervals:[1,7].contains($0) ? [WorkInterval()] : []) }
+weekendOnly.resourceCalendars![0].exceptions = []
+rejects(weekendOnly,"disjoint weekly calendars rejected")
+var priorityCalendar = calendarReload; priorityCalendar.levelResources = true
+priorityCalendar.activities[0].priority = 100
+priorityCalendar.activities.append(Activity(id:"urgent",name:"Urgent",duration:1,resource:"r",priority:900))
+let priorityCalendarResult = try Planner.calculate(priorityCalendar)
+expect(priorityCalendarResult.timings["urgent"]!.start == 0 && priorityCalendarResult.timings["a"]!.start >= priorityCalendarResult.timings["urgent"]!.finish,"priority respected with shifts")
 print("PASS: \(checks) checks")
