@@ -256,4 +256,13 @@ var deepHierarchy:[Activity] = []
 for i in 0..<1000 { deepHierarchy.append(Activity(id:"s\(i)",name:"Summary",duration:0,kind:"summary",parent:i == 0 ? nil : "s\(i-1)")) }
 let deepRows = Schedule(name:"Deep",activities:deepHierarchy,links:[],resources:[]).orderedActivities
 expect(deepRows.count == 1000 && deepRows.last?.depth == 999,"iterative hierarchy preserves depth without recursive expansion")
+
+
+expect(Planner.validDate("2000-02-29") && Planner.validDate("2028-02-29"),"Gregorian leap years")
+expect(!Planner.validDate("1900-02-29") && !Planner.validDate("2100-02-29"),"Gregorian century exceptions")
+expect(!Planner.validDate("2027-02-29") && !Planner.validDate("2027-04-31"),"invalid month lengths")
+expect(!Planner.validDate("2027-1-01") && !Planner.validDate("2027-01-01x") && !Planner.validDate("0000-01-01"),"canonical ISO date validation")
+let hoursCache = ResourceAvailability(calendarReload)
+let hourlyResource = calendarReload.resources[0]
+expect(hoursCache.hours(hourlyResource,day:1) == 0 && hoursCache.hours(hourlyResource,day:2) == 8 && hoursCache.hours(hourlyResource,day:1) == 0,"cached hours preserve zero and distinct day entries")
 print("PASS: \(checks) checks")

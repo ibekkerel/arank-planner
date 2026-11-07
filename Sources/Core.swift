@@ -265,8 +265,15 @@ struct Planner {
         return Calculation(timings:timings,duration:end,conflicts:conflicts,cost:cost)
     }
     static func validDate(_ value: String) -> Bool {
-        let f = DateFormatter(); f.locale = Locale(identifier:"en_US_POSIX"); f.timeZone = TimeZone(secondsFromGMT:0); f.dateFormat = "yyyy-MM-dd"; f.isLenient = false
-        guard let d = f.date(from:value) else { return false }; return f.string(from:d) == value
+        let bytes = Array(value.utf8)
+        guard bytes.count == 10, bytes[4] == 45, bytes[7] == 45 else { return false }
+        for index in [0,1,2,3,5,6,8,9] where !(48...57).contains(bytes[index]) { return false }
+        let year = Int(bytes[0]-48)*1000+Int(bytes[1]-48)*100+Int(bytes[2]-48)*10+Int(bytes[3]-48)
+        let month = Int(bytes[5]-48)*10+Int(bytes[6]-48), day = Int(bytes[8]-48)*10+Int(bytes[9]-48)
+        guard year > 0, (1...12).contains(month) else { return false }
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+        let limits = [31,leap ? 29 : 28,31,30,31,30,31,31,30,31,30,31]
+        return day >= 1 && day <= limits[month-1]
     }
     static func date(_ offset: Int, plan: Schedule) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier:"en_US_POSIX"); f.timeZone = TimeZone(identifier:plan.calendar.timezone); f.dateFormat = "yyyy-MM-dd"
@@ -553,6 +560,7 @@ struct ResourceCalendar:Codable,Identifiable,Equatable {
 final class ResourceAvailability {
     let plan:Schedule
     private var dates:[String] = []
+    private var calendarHours:[String:[Int:Double]] = [:]
     private let formatter:DateFormatter
     private var calendar:Calendar
     private var current:Date
@@ -572,7 +580,10 @@ final class ResourceAvailability {
     }
     func hours(_ resource:Resource,day:Int) -> Double {
         guard let id = resource.calendarID, let resourceCalendar = plan.resourceCalendars?.first(where:{ $0.id == id }) else { return 8 }
-        return resourceCalendar.hours(date:date(day))
+        if let value = calendarHours[id]?[day] { return value }
+        let value = resourceCalendar.hours(date:date(day))
+        calendarHours[id,default:[:]][day] = value
+        return value
     }
 }
 struct CalendarWorkDay {
@@ -606,6 +617,13 @@ enum CalendarScheduler {
     static func calculate(_ plan:Schedule) throws -> Calculation {
         let availability = ResourceAvailability(plan)
         let resources = Dictionary(uniqueKeysWithValues:plan.resources.map { ($0.id,$0) })
+        var profiles:[String:[Int:[CalendarWorkDay]]] = [:]
+        func profile(_ task:Activity,start:Int) throws -> [CalendarWorkDay] {
+            if let value = profiles[task.id]?[start] { return value }
+            let value = try work(task,resource:resources[task.resource]!,start:start,availability:availability)
+            profiles[task.id,default:[:]][start] = value
+            return value
+        }
         var staged = plan
         // Materialise each calendar span into the existing checked date/link solver.
         // Re-run until all spans and starts agree; reject rather than return a stale plan.
@@ -629,7 +647,7 @@ enum CalendarScheduler {
                     }
                     guard remaining <= 0.0000001 else { throw PlanError.invalid("Недостаточно рабочего времени до фиксированного окончания задачи \(task.id)") }
                 }
-                let profile = try work(task,resource:resource,start:oldStart,availability:availability)
+                let profile = try profile(task,start:oldStart)
                 guard let first = profile.first, let last = profile.last else { continue }
                 // Use plain duration to avoid applying volume conversion a second time.
                 next.activities[index].volume = nil; next.activities[index].productivity = nil
@@ -639,8 +657,8 @@ enum CalendarScheduler {
             let candidate = try Planner.calculate(next,applyResourceCalendars:false)
             var consistent = true
             for task in plan.activities where task.entityType == "task" {
-                guard let resource = resources[task.resource], let timing = candidate.timings[task.id] else { continue }
-                let profile = try work(task,resource:resource,start:timing.start,availability:availability)
+                guard resources[task.resource] != nil, let timing = candidate.timings[task.id] else { continue }
+                let profile = try profile(task,start:timing.start)
                 if let first = profile.first, let last = profile.last, first.day != timing.start || last.day+1 != timing.finish { consistent = false; break }
             }
             if consistent {
@@ -648,7 +666,7 @@ enum CalendarScheduler {
                 answer.cost = 0
                 for task in plan.activities {
                     guard let resource = resources[task.resource], let timing = answer.timings[task.id] else { continue }
-                    let profile = try work(task,resource:resource,start:timing.start,availability:availability)
+                    let profile = try profile(task,start:timing.start)
                     let hours = profile.reduce(0) { $0+$1.hours }
                     answer.cost += hours * task.units * resource.dailyRate / (resource.timeUnit == "hour" ? 1 : 8)
                 }
@@ -674,7 +692,7 @@ enum CalendarScheduler {
 }
 
 extension Planner {
-    static func loads(resource:Resource,days:Int,plan:Schedule,result:Calculation) -> [ResourceDay] {
+    static func loads(resource:Resource,days:Int,plan:Schedule,result:Calculation,availability:ResourceAvailability? = nil) -> [ResourceDay] {
         guard days > 0 else { return [] }
         guard plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) else {
             var quantity = Array(repeating:0.0,count:days+1), output = quantity
@@ -698,7 +716,7 @@ extension Planner {
                 return ResourceDay(quantity:abs(used) < 0.000000001 ? 0 : used,capacity:resource.capacity,output:abs(produced) < 0.000000001 ? 0 : produced,outputCapacity:resource.productivity.map { $0*resource.capacity })
             }
         }
-        let availability = ResourceAvailability(plan)
+        let availability = availability ?? ResourceAvailability(plan)
         var quantity = Array(repeating:0.0,count:days), output = quantity
         for task in plan.activities where task.resource == resource.id {
             guard let timing = result.timings[task.id], let profile = try? CalendarScheduler.work(task,resource:resource,start:timing.start,availability:availability) else { continue }
@@ -748,7 +766,7 @@ final class ScheduleAnalysis {
     func loads(_ resource:Resource,days:Int) -> [ResourceDay] {
         if let entry = loadProfiles[resource.id], entry.0 == days { return entry.1 }
         guard let result = try? calculation() else { return [] }
-        let value = Planner.loads(resource:resource,days:days,plan:plan,result:result)
+        let value = Planner.loads(resource:resource,days:days,plan:plan,result:result,availability:dateAxis)
         loadProfiles[resource.id] = (days,value); return value
     }
 }

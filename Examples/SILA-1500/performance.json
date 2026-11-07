@@ -1,0 +1,161 @@
+{
+  "checks" : 18585,
+  "conflicts" : 0,
+  "cost_rub" : 1065387200,
+  "duration_working_days" : 1649,
+  "elements" : 1500,
+  "finish" : "2032-05-28",
+  "links" : 1687,
+  "metrics" : [
+    {
+      "max_ms" : 305.00006675720215,
+      "median_ms" : 297.99401760101318,
+      "min_ms" : 297.79696464538574,
+      "operation" : "open_parse_and_validate",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 286.95893287658691,
+      "median_ms" : 285.89105606079102,
+      "min_ms" : 284.11006927490234,
+      "operation" : "full_resource_calendar_calculation",
+      "repeats" : 5
+    },
+    {
+      "max_ms" : 17.032027244567871,
+      "median_ms" : 16.955971717834473,
+      "min_ms" : 16.952991485595703,
+      "operation" : "prepare_all_dates_scale_and_loads",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 0.028967857360839844,
+      "median_ms" : 0.028014183044433594,
+      "min_ms" : 0.028014183044433594,
+      "operation" : "cached_result_reads_3000",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 305.69303035736084,
+      "median_ms" : 299.96097087860107,
+      "min_ms" : 299.58105087280273,
+      "operation" : "edit_manufacturing_duration_plus_10d",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 298.08604717254639,
+      "median_ms" : 294.46291923522949,
+      "min_ms" : 290.79902172088623,
+      "operation" : "edit_concrete_volume_plus_20pct",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 217.29493141174316,
+      "median_ms" : 216.39907360076904,
+      "min_ms" : 213.12201023101807,
+      "operation" : "edit_RKD_priority_1000",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 294.44289207458496,
+      "median_ms" : 286.24296188354492,
+      "min_ms" : 285.44509410858154,
+      "operation" : "edit_station_contractor_capacity_6_to_3",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 285.9189510345459,
+      "median_ms" : 283.91802310943604,
+      "min_ms" : 281.50808811187744,
+      "operation" : "edit_design_productivity_plus_10pct",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 307.44898319244385,
+      "median_ms" : 268.70095729827881,
+      "min_ms" : 266.37208461761475,
+      "operation" : "edit_shared_design_calendar_vacation",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 364.5930290222168,
+      "median_ms" : 363.51001262664795,
+      "min_ms" : 340.2400016784668,
+      "operation" : "add_cross_package_finish_start_link",
+      "repeats" : 3
+    },
+    {
+      "max_ms" : 351.72700881958008,
+      "median_ms" : 292.746901512146,
+      "min_ms" : 287.4300479888916,
+      "operation" : "preview_linked_task_move_plus_10d",
+      "repeats" : 3
+    }
+  ],
+  "milestones" : 157,
+  "note" : "Optimized Swift build. Median/min/max of repeated engine operations; editing includes timeline and first four resource profiles. Not UI FPS or keyboard-to-screen latency. All durations, capacities and costs are training assumptions.",
+  "project" : "СИЛА · 1500 элементов · учебный тест ESRF-аналог",
+  "resources" : 41,
+  "scenarios" : [
+    {
+      "changed_date_rows" : 83,
+      "conflicts" : 0,
+      "cost_rub" : 1066057200,
+      "duration_days" : 1649,
+      "finish" : "2032-05-28",
+      "operation" : "edit_manufacturing_duration_plus_10d"
+    },
+    {
+      "changed_date_rows" : 53,
+      "conflicts" : 0,
+      "cost_rub" : 1065824000,
+      "duration_days" : 1649,
+      "finish" : "2032-05-28",
+      "operation" : "edit_concrete_volume_plus_20pct"
+    },
+    {
+      "changed_date_rows" : 404,
+      "conflicts" : 0,
+      "cost_rub" : 1065387200,
+      "duration_days" : 1624,
+      "finish" : "2032-04-29",
+      "operation" : "edit_RKD_priority_1000"
+    },
+    {
+      "changed_date_rows" : 43,
+      "conflicts" : 0,
+      "cost_rub" : 1065387200,
+      "duration_days" : 1649,
+      "finish" : "2032-05-28",
+      "operation" : "edit_station_contractor_capacity_6_to_3"
+    },
+    {
+      "changed_date_rows" : 1024,
+      "conflicts" : 0,
+      "cost_rub" : 1058334109.0909091,
+      "duration_days" : 1613,
+      "finish" : "2032-04-16",
+      "operation" : "edit_design_productivity_plus_10pct"
+    },
+    {
+      "changed_date_rows" : 1256,
+      "conflicts" : 0,
+      "cost_rub" : 1065387200,
+      "duration_days" : 1653,
+      "finish" : "2032-06-02",
+      "operation" : "edit_shared_design_calendar_vacation"
+    },
+    {
+      "changed_date_rows" : 105,
+      "conflicts" : 0,
+      "cost_rub" : 1065387200,
+      "duration_days" : 1650,
+      "finish" : "2032-05-29",
+      "operation" : "add_cross_package_finish_start_link"
+    }
+  ],
+  "start" : "2027-01-11",
+  "summaries" : 159,
+  "tasks" : 1184,
+  "version" : "SILA-1500 benchmark v1"
+}

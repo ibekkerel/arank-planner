@@ -95,16 +95,20 @@ struct TimelineHeader:View {
     static let height:CGFloat = 76
     let scale:TimelineCalendar
     let dayWidth:CGFloat
+    @State private var hoveredDay:Int?
     var days:Int { scale.dates.count }
     var body: some View {
         VStack(alignment:.leading,spacing:0) {
             bands(scale.years,emphasized:true)
             bands(scale.months,emphasized:false)
-            HStack(spacing:0) {
-                ForEach(0..<days,id:\.self) { day in
-                    Text(dayWidth >= 16 || day % 5 == 0 ? "\(day)" : "").lineLimit(1).minimumScaleFactor(0.5).font(.system(size:10)).foregroundStyle(.secondary).frame(width:dayWidth,height:32).help(scale.dates[day])
+            Canvas { context,size in
+                let step = dayWidth >= 16 ? 1 : max(5,Int(ceil(20/dayWidth)))
+                for day in stride(from:0,to:days,by:step) {
+                    context.draw(Text("\(day)").font(.system(size:10)).foregroundColor(.secondary),at:CGPoint(x:CGFloat(day)*dayWidth+dayWidth/2,y:16))
                 }
-            }
+            }.frame(height:32).onContinuousHover { phase in
+                switch phase { case .active(let point): let day = Int(floor(point.x/dayWidth)); hoveredDay = scale.dates.indices.contains(day) ? day : nil; case .ended: hoveredDay = nil }
+            }.help(hoveredDay.flatMap { scale.dates.indices.contains($0) ? scale.dates[$0] : nil } ?? "Рабочие дни проекта").accessibilityLabel("Шкала рабочих дней: 0–\(max(0,days-1))")
         }.frame(height:Self.height,alignment:.topLeading)
     }
     func bands(_ bands:[TimelineBand],emphasized:Bool) -> some View {
@@ -179,4 +183,36 @@ final class ScrollObserverSurface:NSView {
         }
     }
     deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+}
+
+struct ResourceHeatmap:View {
+    let loads:[ResourceDay]
+    let width:CGFloat
+    let dayWidth:CGFloat
+    let title:String
+    let symbol:String
+    let date:(Int)->String
+    @State private var hovered:Int?
+    var tooltip:String {
+        guard let day = hovered, loads.indices.contains(day) else { return title+": наведите на рабочий день для подробностей" }
+        let load = loads[day]
+        return "\(date(day)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); \(load.capacity == 0 ? "нерабочий день; " : "")выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн."
+    }
+    var body:some View {
+        Canvas { context,size in
+            for day in loads.indices {
+                let load = loads[day], ratio = load.capacity > 0 ? load.quantity/load.capacity : 0
+                let rect = CGRect(x:CGFloat(day)*dayWidth,y:0,width:dayWidth,height:33)
+                let color = ratio > 1.000001 ? Color.orange.opacity(0.75) : (load.capacity == 0 ? Color.secondary.opacity(0.16) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65))))
+                context.fill(Path(rect),with:.color(color))
+                if dayWidth >= 4 { context.stroke(Path(rect),with:.color(.secondary.opacity(0.1)),lineWidth:0.5) }
+                if dayWidth > 28 {
+                    context.draw(Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)),at:CGPoint(x:rect.midX,y:dayWidth > 50 && load.output > 0 ? 11 : 16))
+                    if dayWidth > 50 && load.output > 0 { context.draw(Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)),at:CGPoint(x:rect.midX,y:24)) }
+                }
+            }
+        }.frame(width:width,height:33).onContinuousHover { phase in
+            switch phase { case .active(let point): let day = Int(floor(point.x/dayWidth)); hovered = loads.indices.contains(day) ? day : nil; case .ended: hovered = nil }
+        }.help(tooltip).accessibilityLabel("Загрузка: "+title).accessibilityValue(hovered == nil ? "\(loads.count) рабочих дней" : tooltip)
+    }
 }

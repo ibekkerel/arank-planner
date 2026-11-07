@@ -179,7 +179,7 @@ struct MainView: View {
                     let result = w.result
                     let days = max(10,(result?.duration ?? 0) + 3)
                     let tableWidth = min(CGFloat(preferredTableWidth),geo.size.width * 0.65)
-                    let dayWidth = fit ? max(1,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
+                    let dayWidth = fit ? max(0.25,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
                     let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
                     VStack(spacing:0) {
                     ScrollView([.horizontal,.vertical]) {
@@ -364,7 +364,7 @@ struct GanttRow: View {
     @State private var moveDelta: CGFloat = 0
     var body: some View {
         ZStack(alignment:.leading) {
-            Path { p in for i in 0...max(0,Int(width/dayWidth)) { p.move(to:CGPoint(x:CGFloat(i)*dayWidth,y:0)); p.addLine(to:CGPoint(x:CGFloat(i)*dayWidth,y:38)) } }.stroke(Color.secondary.opacity(0.12),lineWidth:1)
+            Path { p in for i in stride(from:0,through:max(0,Int(width/dayWidth)),by:max(1,Int(ceil(6/dayWidth)))) { p.move(to:CGPoint(x:CGFloat(i)*dayWidth,y:0)); p.addLine(to:CGPoint(x:CGFloat(i)*dayWidth,y:38)) } }.stroke(Color.secondary.opacity(0.12),lineWidth:1)
             if let b = baseline { Rectangle().fill(Color.secondary.opacity(0.4)).frame(width:max(3,CGFloat(b.finish-b.start)*dayWidth),height:3).offset(x:CGFloat(b.start)*dayWidth,y:13) }
             if let t = timing {
                 let length = max(3,CGFloat(t.finish-t.start)*dayWidth-2)
@@ -705,20 +705,14 @@ struct ResourceLoadPanel: View {
                 HStack(spacing:0) { ForEach(0..<days,id:\.self) { day in Text(dayWidth >= 16 || day % 5 == 0 ? "\(day)" : "").lineLimit(1).minimumScaleFactor(0.5).font(.system(size:9)).frame(width:dayWidth) } }.frame(width:chartWidth,alignment:.leading)
             }.frame(height:28).background(Color(nsColor:.controlBackgroundColor))
             ScrollView(.vertical) {
-                VStack(spacing:0) {
+                LazyVStack(spacing:0) {
                     ForEach(plan.resources) { resource in
                         let type = plan.resourceTypes.first { $0.id == resource.typeID }
                         let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol ?? "ед."
                         let loads = w.snapshot.loads(resource,days:days)
                         HStack(spacing:0) {
                             HStack { Text(resource.name).bold(); Text("Доступно: \(resource.capacity.formatted())").foregroundStyle(.secondary); if let p = resource.productivity { Text("Выработка: \(p.formatted()) \(symbol)/\(resource.timeUnit == "hour" ? "ч" : "дн") на единицу").foregroundStyle(.secondary) }; Spacer() }.font(.caption).padding(.leading,10).frame(width:tableWidth)
-                            HStack(spacing:0) {
-                                ForEach(0..<days,id:\.self) { day in
-                                    let load = loads[day]
-                                    let ratio = load.capacity > 0 ? load.quantity/load.capacity : 0
-                                    VStack(spacing:1) { if dayWidth > 28 { Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)) }; if dayWidth > 50 && load.output > 0 { Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)) } }.frame(width:dayWidth,height:33).background(ratio > 1.000001 ? Color.orange.opacity(0.75) : (load.capacity == 0 ? Color.secondary.opacity(0.16) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65))))).overlay { Rectangle().stroke(Color.secondary.opacity(0.1),lineWidth:0.5) }.help("\(w.date(day)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); \(load.capacity == 0 ? "Нерабочий день; " : "")плановая выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн.")
-                                }
-                            }.frame(width:chartWidth,alignment:.leading)
+                            ResourceHeatmap(loads:loads,width:chartWidth,dayWidth:dayWidth,title:resource.name,symbol:symbol,date:{ w.date($0) })
                         }.frame(height:34)
                     }
                 }
