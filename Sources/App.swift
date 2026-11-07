@@ -144,83 +144,9 @@ struct MainView: View {
     }
     var body: some View {
         VStack(spacing:0) {
-            HStack(spacing:14) {
-                Label("Arank Planner",systemImage:"point.3.connected.trianglepath.dotted").font(.headline).foregroundStyle(.teal)
-                Divider().frame(height:20)
-                Text(w.plan.name + (w.dirty ? " •" : "")).font(.headline).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading).layoutPriority(-1)
-                Spacer()
-                Picker("Раздел",selection:$tab) { Text("График").tag("График"); Text("Ресурсы").tag("Ресурсы"); Text("Справочники").tag("Справочники"); Text("Проект").tag("Параметры") }.pickerStyle(.segmented).frame(width:400).labelsHidden()
-                Button { w.open() } label: { Image(systemName:"folder") }.help("Открыть проект ⌘O")
-                Button { _ = w.save() } label: { Image(systemName:"square.and.arrow.down") }.help("Сохранить ⌘S")
-            }.padding(.horizontal,16).padding(.vertical,10)
-            Divider()
+            projectTabs
             if tab == "График" {
-                VStack(spacing:8) {
-                    HStack(alignment:.top,spacing:16) {
-                        ribbonGroup("Создание") {
-                            Menu {
-                                Button("Задача",systemImage:"plus.rectangle") { add("task") }
-                                Button("Веха",systemImage:"diamond") { add("milestone") }
-                                Button("Суммарная задача",systemImage:"folder.badge.plus") { add("summary") }
-                            } label: { Label("Создать",systemImage:"plus") }.frame(width:115)
-                            Button("Объединить (\(w.selectedIDs.count))") { w.groupSelection() }.frame(width:145).disabled(w.selectedIDs.count < 2)
-                        }
-                        Divider().frame(height:54)
-                        ribbonGroup("Расчёт") {
-                            Picker("Режим расчёта",selection:Binding(get:{ w.automaticCalculation },set:{ w.setAutomaticCalculation($0) })) {
-                                Label("Авто",systemImage:"bolt.fill").tag(true)
-                                Label("Вручную",systemImage:"hand.raised.fill").tag(false)
-                            }.pickerStyle(.segmented).labelsHidden().frame(width:190).help("Авто — расчёт после каждого изменения; вручную — по кнопке")
-                            Button { _ = w.recalculate() } label: { Label("Пересчитать",systemImage:"arrow.clockwise") }
-                                .frame(width:120).disabled(w.automaticCalculation && !w.needsCalculation)
-                                .tint(w.needsCalculation ? .orange : .teal)
-                                .help(w.needsCalculation ? "Даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
-                            Toggle("По ресурсам",isOn:Binding(get:{ w.plan.levelResources ?? true },set:{ enabled in w.change { $0.levelResources = enabled } })).toggleStyle(.checkbox)
-                            Button("Базовый план") { w.baseline() }
-                            Button("Связи",systemImage:"arrow.triangle.branch") { showLinks.toggle() }
-                        }
-                        Spacer(minLength:0)
-                    }
-                    HStack(alignment:.top,spacing:16) {
-                        ribbonGroup("Вид") {
-                            Menu {
-                                Button("Раскрыть всё") { collapsed.removeAll() }
-                                Button("Свернуть всё") {
-                                    collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" }.map { $0.activity.id })
-                                }
-                                Divider()
-                                ForEach(1...max(1,(w.snapshot.orderedActivities.map { $0.depth }.max() ?? 0)+1),id:\.self) { level in
-                                    Button("Показать до уровня \(level)") {
-                                        collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" && $0.depth >= level-1 }.map { $0.activity.id })
-                                    }
-                                }
-                            } label: { Label("Уровни",systemImage:"list.bullet.indent") }
-                            .help("Раскрытие и сворачивание иерархии задач; корневые строки — уровень 1")
-                            Menu {
-                                ForEach(ScheduleColumn.all.filter { !["select","name","menu"].contains($0.id) }) { field in
-                                    Toggle(field.title,isOn:Binding(get:{ visibleColumns.contains(field.id) },set:{ setColumn(field.id,$0) }))
-                                }
-                                Divider()
-                                Button("Основные поля") { visibleColumnIDs = "code,name,duration,start,finish,progress"; columnOffset = 0 }
-                                Button("Все поля") { visibleColumnIDs = ScheduleColumn.all.map(\.id).joined(separator:","); columnOffset = 0 }
-                            } label: { Label("Поля таблицы",systemImage:"tablecells") }
-                            Button("Загрузка") { showResourceLoad.toggle() }
-                            Button("Показатели") { showMetrics.toggle() }
-                            Button { NSApplication.shared.keyWindow?.toggleFullScreen(nil) } label: { Image(systemName:"arrow.up.left.and.arrow.down.right") }.help("На весь экран")
-                        }
-                        Divider().frame(height:54)
-                        ribbonGroup("Масштаб и таблица") {
-                            Button { showScaleSettings.toggle() } label: { Label("Масштаб",systemImage:"magnifyingglass") }
-                                .popover(isPresented:$showScaleSettings) { GraphScaleSettings(fit:$fit,zoom:$zoom) }
-                            Button { fit = false; zoom = max(2,zoom/1.25) } label: { Image(systemName:"minus.magnifyingglass") }.help("Уменьшить график")
-                            Button { fit = false; zoom = min(160,zoom*1.25) } label: { Image(systemName:"plus.magnifyingglass") }.help("Увеличить график")
-                            Text("Таблица").font(.caption)
-                            Slider(value:$preferredTableWidth,in:300...900).frame(width:110).help("Ширина табличной части; также потяните разделитель у графика")
-                        }
-                        Spacer(minLength:0)
-                    }
-                }.controlSize(.small).padding(.horizontal,12).padding(.vertical,8)
-                    .frame(maxWidth:.infinity).frame(height:128).background(Color(nsColor:.controlBackgroundColor))
+                plannerRibbon
                 HStack(spacing:6) {
                     Image(systemName:w.needsCalculation ? "exclamationmark.circle.fill" : "checkmark.circle")
                     Text(w.needsCalculation ? "Требуется пересчёт — даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
@@ -247,6 +173,102 @@ struct MainView: View {
         .sheet(item:$properties) { activity in TaskProperties(activity:activity) }
         .sheet(item:$w.propertyActivity) { activity in TaskProperties(activity:activity) }
     }
+    private var projectTabs:some View {
+        HStack(spacing:0) {
+            HStack(spacing:8) {
+                Image(systemName:"diamond.inset.filled").font(.system(size:20,weight:.light)).foregroundStyle(Color.arankBlue)
+                Text("ARANK").font(.system(size:13,weight:.bold,design:.rounded)).tracking(2).foregroundStyle(Color.arankInk)
+            }.frame(width:116)
+            HStack(spacing:8) {
+                Image(systemName:"chart.bar.xaxis").foregroundStyle(Color.arankBlue)
+                Text(w.plan.name + (w.dirty ? " •" : "")).font(.system(size:12,weight:.semibold)).lineLimit(1)
+            }.padding(.horizontal,14).frame(maxWidth:360,minHeight:34,alignment:.leading)
+                .background(Color.white,in:UnevenRoundedRectangle(topLeadingRadius:7,topTrailingRadius:7))
+                .overlay(alignment:.top) { RoundedRectangle(cornerRadius:1).fill(Color.arankBlue).frame(height:2).padding(.horizontal,8) }
+                .padding(.top,6)
+            Spacer(minLength:12)
+            ForEach(["График","Ресурсы","Справочники","Проект"],id:\.self) { title in
+                let value = title == "Проект" ? "Параметры" : title
+                Button { tab = value } label: {
+                    Text(title).font(.system(size:12,weight:tab == value ? .semibold : .medium))
+                        .foregroundStyle(tab == value ? Color.arankInk : Color.arankMuted)
+                        .frame(width:title == "Справочники" ? 112 : 84,height:34)
+                        .background(tab == value ? Color.white : Color.clear,in:UnevenRoundedRectangle(topLeadingRadius:6,topTrailingRadius:6))
+                }.buttonStyle(.plain).padding(.top,6).accessibilityAddTraits(tab == value ? .isSelected : [])
+            }
+        }.padding(.trailing,12).frame(height:40).background(Color.arankChrome)
+            .overlay(alignment:.bottom) { Color.arankBlue.opacity(0.18).frame(height:1) }
+    }
+    private var plannerRibbon:some View {
+        HStack(spacing:4) {
+            Button { w.open() } label: { RibbonTile("Открыть\nпроект",icon:"folder") }.help("Открыть проект ⌘O")
+            Button { _ = w.save() } label: { RibbonTile("Сохранить\nпроект",icon:"square.and.arrow.down") }.help("Сохранить ⌘S")
+            ribbonDivider
+            RibbonMenu {
+                Button("Задача",systemImage:"plus.rectangle") { add("task") }
+                Button("Веха",systemImage:"diamond") { add("milestone") }
+                Button("Суммарная задача",systemImage:"folder.badge.plus") { add("summary") }
+            } label: { RibbonTile("Создать\nобъект",icon:"plus.square",disclosure:true) }
+            Button { if let a = w.plan.activities.first(where:{ $0.id == w.selection }) { w.propertyActivity = a } } label: { RibbonTile("Свойства\nзадачи",icon:"doc.text") }.disabled(w.selection == nil)
+            Button { w.groupSelection() } label: { RibbonTile("Суммарная\nзадача",icon:"square.stack.3d.up") }.disabled(w.selectedIDs.count < 2).help("Объединить выбранные задачи в суммарную")
+            ribbonDivider
+            VStack(spacing:7) {
+                Picker("Режим расчёта",selection:Binding(get:{ w.automaticCalculation },set:{ w.setAutomaticCalculation($0) })) {
+                    Text("Авто").tag(true); Text("Вручную").tag(false)
+                }.pickerStyle(.segmented).labelsHidden().frame(width:142).controlSize(.small)
+                Text("Режим расчёта").font(.system(size:10,weight:.medium)).foregroundStyle(Color.arankMuted)
+            }.frame(width:150,height:64)
+            Button { _ = w.recalculate() } label: { RibbonTile("Расчёт\nграфика",icon:"arrow.clockwise",active:w.needsCalculation) }.disabled(w.automaticCalculation && !w.needsCalculation)
+            RibbonMenu {
+                Toggle("Учитывать ресурсы",isOn:Binding(get:{ w.plan.levelResources ?? true },set:{ enabled in w.change { $0.levelResources = enabled } }))
+                Button("Сохранить базовый план") { w.baseline() }
+            } label: { RibbonTile("Параметры\nрасчёта",icon:"slider.horizontal.3",disclosure:true) }
+            Button { showLinks.toggle() } label: { RibbonTile("Связи\nзадач",icon:"arrow.triangle.branch",active:showLinks) }
+            ribbonDivider
+            RibbonMenu {
+                                Button("Раскрыть всё") { collapsed.removeAll() }
+                                Button("Свернуть всё") {
+                                    collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" }.map { $0.activity.id })
+                                }
+                                Divider()
+                                ForEach(1...max(1,(w.snapshot.orderedActivities.map { $0.depth }.max() ?? 0)+1),id:\.self) { level in
+                                    Button("Показать до уровня \(level)") {
+                                        collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" && $0.depth >= level-1 }.map { $0.activity.id })
+                                    }
+                                }
+
+            } label: { RibbonTile("Уровни\nграфика",icon:"list.bullet.indent",disclosure:true) }
+            RibbonMenu {
+                                ForEach(ScheduleColumn.all.filter { !["select","name","menu"].contains($0.id) }) { field in
+                                    Toggle(field.title,isOn:Binding(get:{ visibleColumns.contains(field.id) },set:{ setColumn(field.id,$0) }))
+                                }
+                                Divider()
+                                Button("Основные поля") { visibleColumnIDs = "code,name,duration,start,finish,progress"; columnOffset = 0 }
+                                Button("Все поля") { visibleColumnIDs = ScheduleColumn.all.map(\.id).joined(separator:","); columnOffset = 0 }
+
+            } label: { RibbonTile("Поля\nтаблицы",icon:"tablecells",disclosure:true) }
+            Button { showResourceLoad.toggle() } label: { RibbonTile("Загрузка\nресурсов",icon:"chart.bar",active:showResourceLoad) }
+            Button { showScaleSettings.toggle() } label: { RibbonTile("Масштаб\nи таблица",icon:"arrow.up.left.and.arrow.down.right") }
+                .popover(isPresented:$showScaleSettings) {
+                    VStack(spacing:0) {
+                        GraphScaleSettings(fit:$fit,zoom:$zoom)
+                        Divider()
+                        VStack(alignment:.leading,spacing:8) {
+                            Text("Ширина таблицы").font(.headline)
+                            Slider(value:$preferredTableWidth,in:300...900).accessibilityLabel("Ширина табличной части")
+                        }.padding(20).frame(width:350)
+                    }
+                }
+            RibbonMenu {
+                Toggle("Показатели проекта",isOn:$showMetrics)
+                Button("На весь экран") { NSApplication.shared.keyWindow?.toggleFullScreen(nil) }
+            } label: { RibbonTile("Ещё",icon:"ellipsis",disclosure:true) }
+            Spacer(minLength:0)
+        }.buttonStyle(RibbonButtonStyle()).menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .padding(.horizontal,10).frame(maxWidth:.infinity).frame(height:82).background(Color.white)
+            .overlay(alignment:.bottom) { Color.arankBlue.opacity(0.15).frame(height:1) }
+    }
+    private var ribbonDivider:some View { Rectangle().fill(Color.arankBlue.opacity(0.16)).frame(width:1,height:48).padding(.horizontal,5) }
     func add(_ kind: String) {
         let numbers = Set(w.plan.activities.map(\.id)); var n = w.plan.activities.count+1
         while numbers.contains("T\(n)") { n += 1 }

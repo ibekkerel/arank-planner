@@ -221,3 +221,55 @@ struct ResourceHeatmap:View {
         }.help(tooltip).accessibilityLabel("Загрузка: "+title).accessibilityValue(hovered == nil ? "\(loads.count) рабочих дней" : tooltip)
     }
 }
+
+
+extension Color {
+    static let arankBlue = Color(red:0.30,green:0.48,blue:0.69)
+    static let arankInk = Color(red:0.24,green:0.34,blue:0.46)
+    static let arankMuted = Color(red:0.48,green:0.55,blue:0.64)
+    static let arankChrome = Color(red:0.88,green:0.92,blue:0.96)
+}
+struct RibbonTile:View {
+    @Environment(\.isEnabled) private var enabled
+    let title:String
+    let icon:String
+    var active = false
+    var disclosure = false
+    init(_ title:String,icon:String,active:Bool = false,disclosure:Bool = false) { self.title = title; self.icon = icon; self.active = active; self.disclosure = disclosure }
+    var body:some View {
+        VStack(spacing:6) {
+            Image(systemName:icon).font(.system(size:20,weight:.regular)).frame(height:24)
+            Text(title).font(.system(size:10,weight:.medium)).multilineTextAlignment(.center).lineLimit(2).frame(height:26,alignment:.top)
+        }.foregroundStyle(active ? Color.arankBlue : Color.arankMuted)
+            .frame(width:62,height:64).background(active ? Color.arankBlue.opacity(0.08) : Color.clear,in:RoundedRectangle(cornerRadius:5))
+            .overlay(alignment:.topTrailing) { if disclosure { Image(systemName:"chevron.down").font(.system(size:6,weight:.semibold)).foregroundStyle(Color.arankMuted).padding(4) } }
+            .opacity(enabled ? 1 : 0.4).contentShape(Rectangle()).accessibilityLabel(title.replacingOccurrences(of:"\n",with:" "))
+    }
+}
+struct RibbonButtonStyle:ButtonStyle {
+    func makeBody(configuration:Configuration) -> some View {
+        configuration.label.background(configuration.isPressed ? Color.arankBlue.opacity(0.14) : Color.clear,in:RoundedRectangle(cornerRadius:5)).opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+struct RibbonMenu<Content:View,Tile:View>:View {
+    @State private var presented = false
+    let content:()->Content
+    let tile:()->Tile
+    init(@ViewBuilder content:@escaping()->Content,@ViewBuilder label:@escaping()->Tile) { self.content = content; self.tile = label }
+    var body:some View {
+        Button { presented.toggle() } label: { tile() }
+            .popover(isPresented:$presented,arrowEdge:.bottom) {
+                VStack(alignment:.leading,spacing:4,content:content)
+                    .buttonStyle(RibbonMenuActionStyle()).controlSize(.small)
+                    .padding(12).frame(minWidth:230)
+                    .simultaneousGesture(TapGesture().onEnded { presented = false })
+            }
+    }
+}
+struct RibbonMenuActionStyle:ButtonStyle {
+    func makeBody(configuration:Configuration) -> some View {
+        configuration.label.font(.system(size:12)).frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,8).padding(.vertical,6)
+            .background(configuration.isPressed ? Color.arankBlue.opacity(0.12) : Color.clear,in:RoundedRectangle(cornerRadius:4)).contentShape(Rectangle())
+    }
+}
