@@ -265,4 +265,10 @@ expect(!Planner.validDate("2027-1-01") && !Planner.validDate("2027-01-01x") && !
 let hoursCache = ResourceAvailability(calendarReload)
 let hourlyResource = calendarReload.resources[0]
 expect(hoursCache.hours(hourlyResource,day:1) == 0 && hoursCache.hours(hourlyResource,day:2) == 8 && hoursCache.hours(hourlyResource,day:1) == 0,"cached hours preserve zero and distinct day entries")
+let parentTest = Schedule(name:"parents",activities:[Activity(id:"root",name:"Root",duration:0,kind:"summary"),Activity(id:"child",name:"Child",duration:0,kind:"summary",parent:"root"),Activity(id:"other",name:"Other",duration:0,kind:"summary"),Activity(id:"leaf",name:"Leaf",duration:1,parent:"child")],links:[],resources:[])
+let parentSnapshot = ScheduleAnalysis(plan:parentTest)
+expect(parentSnapshot.parentChoices(for:"root").map(\.id) == ["other"],"parent options exclude own subtree")
+expect(parentSnapshot.parentChoices(for:"child").map(\.id) == ["root","other"],"parent options preserve valid ancestors")
+expect(parentSnapshot.parentChoices(for:"leaf").map(\.id) == ["root","child","other"],"leaf parent options")
+expect(parentSnapshot.parentChoices(for:"root").map(\.id) == ["other"] && parentSnapshot.calculationBuildCount == 0,"parent options cache does not calculate schedule")
 print("PASS: \(checks) checks")

@@ -224,83 +224,7 @@ struct MainView: View {
                     HStack { Metric(title:"ДЛИТЕЛЬНОСТЬ",value:"\(r.duration) раб. дн."); Metric(title:"ЗАТРАТЫ",value:"\(r.cost.formatted(.number.precision(.fractionLength(0)))) \(w.plan.currency)"); Metric(title:"ПЕРЕГРУЗКИ",value:"\(r.conflicts.count)") }.padding(10)
                 }
                 Divider()
-                GeometryReader { geo in
-                    let result = w.result
-                    let days = max(10,(result?.duration ?? 0) + 3)
-                    let tableWidth = min(CGFloat(preferredTableWidth),geo.size.width * 0.65)
-                    let dayWidth = fit ? max(0.25,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
-                    let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
-                    VStack(spacing:0) {
-                    ScrollView([.horizontal,.vertical]) {
-                        LazyVStack(alignment:.leading,spacing:0) {
-                            header(days:days,dayWidth:dayWidth,chartWidth:chartWidth,tableWidth:tableWidth)
-                            ForEach(rows,id:\.activity.id) { row in
-                                HStack(spacing:0) {
-                                    TaskTableRow(activity:row.activity,depth:row.depth,visibleColumns:visibleColumns,collapsed:collapsed.contains(row.activity.id),toggleCollapse:{ if collapsed.contains(row.activity.id) { collapsed.remove(row.activity.id) } else { collapsed.insert(row.activity.id) } }).frame(width:contentWidth).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
-                                    GanttRow(activity:row.activity,timing:result?.timings[row.activity.id],baseline:w.plan.baseline[row.activity.id],width:chartWidth,dayWidth:dayWidth,onDrag:{ finish,value in
-                                        connectionDrag = ConnectionDrag(source:ConnectionEndpoint(activityID:row.activity.id,finish:finish),start:value.startLocation,point:value.location)
-                                    },onDrop:{ finish,value in
-                                        defer { connectionDrag = nil }
-                                        let index = Int(floor((value.location.y-TimelineHeader.height)/39))
-                                        guard index >= 0, index < rows.count else { return }
-                                        let target = rows[index].activity
-                                        guard target.id != row.activity.id, target.entityType != "summary", let t = result?.timings[target.id] else { return }
-                                        let x = value.location.x-tableWidth
-                                        let start = CGFloat(t.start)*dayWidth, end = CGFloat(t.finish)*dayWidth
-                                        guard x >= start-22, x <= end+22 else { return }
-                                        let link = Link(from:row.activity.id,to:target.id)
-                                        guard !w.plan.links.contains(where:{ $0.from == link.from && $0.to == link.to && $0.type == link.type && $0.lag == link.lag }) else { return }
-                                        w.change { $0.links.append(link) }
-                                    },onMove:{ start in w.move(row.activity.id,to:start) })
-                                }.frame(height:38).background(w.selectedIDs.contains(row.activity.id) || w.selection == row.activity.id ? Color.teal.opacity(0.10) : Color(nsColor:.textBackgroundColor)).contentShape(Rectangle()).onTapGesture { w.select(row.activity.id,order:rows.map { $0.activity.id }) }
-                                .background { NativeTaskMenu(properties:{ properties = row.activity },select:{ w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id },delete:{ w.delete(row.activity.id) },group:w.selectedIDs.count > 1 ? { w.groupSelection() } : nil).frame(maxWidth:.infinity,maxHeight:.infinity) }
-                                .contextMenu {
-                                    Button("Свойства…") { properties = row.activity }
-                                    Button("Выбрать задачу") { w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id }
-                                    if w.selectedIDs.count > 1 { Button("Объединить выбранные в суммарную") { w.groupSelection() } }
-                                    Divider()
-                                    Button(w.selectedIDs.contains(row.activity.id) && w.selectedIDs.count > 1 ? "Удалить выбранные задачи" : "Удалить",role:.destructive) { w.delete(row.activity.id) }
-                                }
-                                Divider()
-                            }
-                            Button { add("task") } label: { HStack { Image(systemName:"plus"); Text("Новая задача — введите название в строке таблицы"); Spacer() }.padding(.horizontal,16).frame(height:38) }.buttonStyle(.plain).foregroundStyle(.secondary)
-                            // Fill the remaining viewport with the same grid instead of centering its contents.
-                            ZStack(alignment:.topLeading) {
-                                Color(nsColor:.textBackgroundColor)
-                                Path { path in
-                                    let height = max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(rows.count)*39)
-                                    for y in stride(from:CGFloat(0),through:height,by:39) { path.move(to:CGPoint(x:0,y:y)); path.addLine(to:CGPoint(x:tableWidth+chartWidth,y:y)) }
-                                    for d in 0...days { let x = tableWidth+CGFloat(d)*dayWidth; path.move(to:CGPoint(x:x,y:0)); path.addLine(to:CGPoint(x:x,y:height)) }
-                                }.stroke(Color.secondary.opacity(0.10),lineWidth:1)
-                            }.frame(height:max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(rows.count)*39 - (showResourceLoad ? 228 : 0)))
-                        }.frame(width:tableWidth+chartWidth,alignment:.topLeading)
-                        .background { HorizontalScrollObserver { canvasScrollX = -$0 } }
-                        .coordinateSpace(name:"scheduleCanvas")
-                        .overlay(alignment:.topLeading) {
-                            ConnectionLines(links:w.plan.links,rows:rows.map(\.activity),timings:result?.timings ?? [:],tableWidth:tableWidth,dayWidth:dayWidth,drag:connectionDrag).allowsHitTesting(false)
-                        }
-                    }.coordinateSpace(name:"scheduleViewport")
-                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
-                    .overlay(alignment:.topLeading) {
-                        Rectangle().fill(Color.teal.opacity(0.4)).frame(width:5).contentShape(Rectangle()).offset(x:tableWidth+canvasScrollX-3)
-                            .help("Перетащите, чтобы изменить ширину таблицы")
-                            .gesture(DragGesture().onChanged { value in
-                                if dividerStart == nil { dividerStart = Double(tableWidth) }
-                                preferredTableWidth = min(max(300,(dividerStart ?? 560)+value.translation.width),min(900,geo.size.width*0.65))
-                            }.onEnded { _ in dividerStart = nil })
-                    }
-                    .safeAreaInset(edge:.bottom,spacing:0) {
-                        if contentWidth > tableWidth {
-                            HStack { Text("Поля таблицы").font(.caption); Slider(value:$columnOffset,in:0...max(1,contentWidth-tableWidth)).accessibilityLabel("Прокрутка полей таблицы") }.padding(.horizontal,8).frame(width:tableWidth,height:25).background(Color(nsColor:.controlBackgroundColor)).frame(maxWidth:.infinity,alignment:.leading)
-                        }
-                    }
-                    if showResourceLoad, let result {
-                        HStack { Label("Загрузка ресурсов",systemImage:"chart.bar.xaxis").font(.caption.bold()); Spacer(); Button("Скрыть",systemImage:"xmark") { showResourceLoad = false } }.padding(.horizontal,10).frame(height:28).background(Color(nsColor:.controlBackgroundColor))
-                        ResourceLoadPanel(plan:w.displayedSnapshot.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
-                            .offset(x:canvasScrollX).frame(width:geo.size.width,height:200,alignment:.leading).clipped()
-                    }
-                    }
-                }.frame(maxWidth:.infinity,maxHeight:.infinity)
+                GeometryReader { geo in graphViewport(geo) }.frame(maxWidth:.infinity,maxHeight:.infinity)
                 if showLinks { Divider(); LinksPanel().frame(height:200).padding(.horizontal,16).padding(.vertical,8) }
                 Divider()
                 HStack { Text("\(w.plan.activities.filter { $0.entityType == "task" }.count) задач · \(w.plan.activities.filter { $0.entityType == "milestone" }.count) вех · \(w.plan.activities.filter { $0.entityType == "summary" }.count) суммарных · \(w.plan.resources.count) ресурсов"); Spacer(); Text("Связь: потяните кружок на краю полосы к другой задаче · Enter — применить") }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,16).padding(.vertical,6)
@@ -326,6 +250,89 @@ struct MainView: View {
     }
     func ribbonGroup<Content:View>(_ title:String,@ViewBuilder content:()->Content) -> some View {
         VStack(alignment:.leading,spacing:8) { HStack(spacing:8,content:content).frame(height:28); Text(title).font(.caption2).foregroundStyle(.secondary) }
+    }
+    @ViewBuilder func graphViewport(_ geo:GeometryProxy) -> some View {
+                    let result = w.result
+                    let visibleRows = rows
+                    let days = max(10,(result?.duration ?? 0) + 3)
+                    let tableWidth = min(CGFloat(preferredTableWidth),geo.size.width * 0.65)
+                    let dayWidth = fit ? max(0.25,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
+                    let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
+                    VStack(spacing:0) {
+                    ScrollView([.horizontal,.vertical]) {
+                        LazyVStack(alignment:.leading,spacing:0) {
+                            header(days:days,dayWidth:dayWidth,chartWidth:chartWidth,tableWidth:tableWidth)
+                            ForEach(visibleRows,id:\.activity.id) { row in
+                                scheduleRow(row,result:result,visibleRows:visibleRows,tableWidth:tableWidth,chartWidth:chartWidth,dayWidth:dayWidth)
+                            }
+                            Button { add("task") } label: { HStack { Image(systemName:"plus"); Text("Новая задача — введите название в строке таблицы"); Spacer() }.padding(.horizontal,16).frame(height:38) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                            // Fill the remaining viewport with the same grid instead of centering its contents.
+                            ZStack(alignment:.topLeading) {
+                                Color(nsColor:.textBackgroundColor)
+                                Path { path in
+                                    let height = max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(visibleRows.count)*39)
+                                    for y in stride(from:CGFloat(0),through:height,by:39) { path.move(to:CGPoint(x:0,y:y)); path.addLine(to:CGPoint(x:tableWidth+chartWidth,y:y)) }
+                                    for d in 0...days { let x = tableWidth+CGFloat(d)*dayWidth; path.move(to:CGPoint(x:x,y:0)); path.addLine(to:CGPoint(x:x,y:height)) }
+                                }.stroke(Color.secondary.opacity(0.10),lineWidth:1)
+                            }.frame(height:max(0,geo.size.height - (TimelineHeader.height+40) - CGFloat(visibleRows.count)*39 - (showResourceLoad ? 228 : 0)))
+                        }.frame(width:tableWidth+chartWidth,alignment:.topLeading)
+                        .background { HorizontalScrollObserver { canvasScrollX = -$0 } }
+                        .coordinateSpace(name:"scheduleCanvas")
+                        .overlay(alignment:.topLeading) {
+                            ConnectionLines(links:w.plan.links,rows:visibleRows.map(\.activity),timings:result?.timings ?? [:],tableWidth:tableWidth,dayWidth:dayWidth,drag:connectionDrag).allowsHitTesting(false)
+                        }
+                    }.coordinateSpace(name:"scheduleViewport")
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+                    .overlay(alignment:.topLeading) {
+                        Rectangle().fill(Color.teal.opacity(0.4)).frame(width:5).contentShape(Rectangle()).offset(x:tableWidth+canvasScrollX-3)
+                            .help("Перетащите, чтобы изменить ширину таблицы")
+                            .gesture(DragGesture().onChanged { value in
+                                if dividerStart == nil { dividerStart = Double(tableWidth) }
+                                preferredTableWidth = min(max(300,(dividerStart ?? 560)+value.translation.width),min(900,geo.size.width*0.65))
+                            }.onEnded { _ in dividerStart = nil })
+                    }
+                    .safeAreaInset(edge:.bottom,spacing:0) {
+                        if contentWidth > tableWidth {
+                            HStack { Text("Поля таблицы").font(.caption); Slider(value:$columnOffset,in:0...max(1,contentWidth-tableWidth)).accessibilityLabel("Прокрутка полей таблицы") }.padding(.horizontal,8).frame(width:tableWidth,height:25).background(Color(nsColor:.controlBackgroundColor)).frame(maxWidth:.infinity,alignment:.leading)
+                        }
+                    }
+                    if showResourceLoad, let result {
+                        HStack { Label("Загрузка ресурсов",systemImage:"chart.bar.xaxis").font(.caption.bold()); Spacer(); Button("Скрыть",systemImage:"xmark") { showResourceLoad = false } }.padding(.horizontal,10).frame(height:28).background(Color(nsColor:.controlBackgroundColor))
+                        ResourceLoadPanel(plan:w.displayedSnapshot.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
+                            .offset(x:canvasScrollX).frame(width:geo.size.width,height:200,alignment:.leading).clipped()
+                    }
+                    }
+    }
+    func scheduleRow(_ row:(activity:Activity,depth:Int),result:Calculation?,visibleRows:[(activity:Activity,depth:Int)],tableWidth:CGFloat,chartWidth:CGFloat,dayWidth:CGFloat) -> some View {
+        VStack(spacing:0) {
+        HStack(spacing:0) {
+            TaskTableRow(activity:row.activity,depth:row.depth,visibleColumns:visibleColumns,collapsed:collapsed.contains(row.activity.id),toggleCollapse:{ if collapsed.contains(row.activity.id) { collapsed.remove(row.activity.id) } else { collapsed.insert(row.activity.id) } }).frame(width:contentWidth).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
+            GanttRow(activity:row.activity,timing:result?.timings[row.activity.id],baseline:w.plan.baseline[row.activity.id],width:chartWidth,dayWidth:dayWidth,onDrag:{ finish,value in
+                connectionDrag = ConnectionDrag(source:ConnectionEndpoint(activityID:row.activity.id,finish:finish),start:value.startLocation,point:value.location)
+            },onDrop:{ finish,value in
+                defer { connectionDrag = nil }
+                let index = Int(floor((value.location.y-TimelineHeader.height)/39))
+                guard index >= 0, index < visibleRows.count else { return }
+                let target = visibleRows[index].activity
+                guard target.id != row.activity.id, target.entityType != "summary", let t = result?.timings[target.id] else { return }
+                let x = value.location.x-tableWidth
+                let start = CGFloat(t.start)*dayWidth, end = CGFloat(t.finish)*dayWidth
+                guard x >= start-22, x <= end+22 else { return }
+                let link = Link(from:row.activity.id,to:target.id)
+                guard !w.plan.links.contains(where:{ $0.from == link.from && $0.to == link.to && $0.type == link.type && $0.lag == link.lag }) else { return }
+                w.change { $0.links.append(link) }
+            },onMove:{ start in w.move(row.activity.id,to:start) })
+        }.frame(height:38).background(w.selectedIDs.contains(row.activity.id) || w.selection == row.activity.id ? Color.teal.opacity(0.10) : Color(nsColor:.textBackgroundColor)).contentShape(Rectangle()).onTapGesture { w.select(row.activity.id,order:visibleRows.map { $0.activity.id }) }
+        .background { NativeTaskMenu(properties:{ properties = row.activity },select:{ w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id },delete:{ w.delete(row.activity.id) },group:w.selectedIDs.count > 1 ? { w.groupSelection() } : nil).frame(maxWidth:.infinity,maxHeight:.infinity) }
+        .contextMenu {
+            Button("Свойства…") { properties = row.activity }
+            Button("Выбрать задачу") { w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id }
+            if w.selectedIDs.count > 1 { Button("Объединить выбранные в суммарную") { w.groupSelection() } }
+            Divider()
+            Button(w.selectedIDs.contains(row.activity.id) && w.selectedIDs.count > 1 ? "Удалить выбранные задачи" : "Удалить",role:.destructive) { w.delete(row.activity.id) }
+        }
+        Divider()
+        }.frame(height:39)
     }
     func header(days:Int,dayWidth:CGFloat,chartWidth:CGFloat,tableWidth:CGFloat) -> some View {
         HStack(alignment:.bottom,spacing:0) {
@@ -384,10 +391,14 @@ struct TaskTableRow: View {
             TaskDateCell(activity:activity,finish:true).frame(width:125).optionalColumn(visibleColumns.contains("finish"))
             TextField("Объём",text:$volume).textFieldStyle(.plain).focused($editing).onSubmit { commit() }.frame(width:75).optionalColumn(visibleColumns.contains("volume")).disabled(activity.entityType != "task")
             Picker("Единица объёма",selection:Binding(get:{ activity.volumeUnit ?? "" },set:{ value in update { $0.volumeUnit = value.isEmpty ? nil : value } })) { Text("—").tag(""); ForEach(w.plan.measurementUnits) { Text($0.symbol).tag($0.symbol) } }.labelsHidden().frame(width:65).optionalColumn(visibleColumns.contains("unit")).disabled(activity.entityType != "task")
-            Picker("Родитель",selection:Binding(get:{ activity.parent ?? "" },set:{ parent in update { $0.parent = parent.isEmpty ? nil : parent } })) {
-                Text("—").tag(""); ForEach(w.plan.activities.filter { $0.entityType == "summary" && !w.plan.descendants(of:activity.id).contains($0.id) }) { Text($0.name).tag($0.id) }
-            }.labelsHidden().frame(width:100).optionalColumn(visibleColumns.contains("parent"))
-            Picker("Ресурс",selection:Binding(get:{ activity.resource },set:{ id in update { $0.resource = id } })) { Text("—").tag(""); ForEach(w.plan.resources) { Text($0.name).tag($0.id) } }.labelsHidden().frame(width:125).optionalColumn(visibleColumns.contains("resource")).disabled(activity.entityType != "task")
+            if visibleColumns.contains("parent") {
+                Picker("Родитель",selection:Binding(get:{ activity.parent ?? "" },set:{ parent in update { $0.parent = parent.isEmpty ? nil : parent } })) {
+                    Text("—").tag(""); ForEach(w.snapshot.parentChoices(for:activity.id)) { Text($0.name).tag($0.id) }
+                }.labelsHidden().frame(width:100)
+            }
+            if visibleColumns.contains("resource") {
+                Picker("Ресурс",selection:Binding(get:{ activity.resource },set:{ id in update { $0.resource = id } })) { Text("—").tag(""); ForEach(w.plan.resources) { Text($0.name).tag($0.id) } }.labelsHidden().frame(width:125).disabled(activity.entityType != "task")
+            }
             TextField("Приоритет",text:$priority).textFieldStyle(.plain).focused($editing).onSubmit { commit() }.frame(width:70).optionalColumn(visibleColumns.contains("priority")).disabled(activity.entityType == "summary").help("0–1000; большее число — раньше при конкуренции за ресурс")
             TextField("Потребность",text:$demand).textFieldStyle(.plain).focused($editing).onSubmit { commit() }.frame(width:50).optionalColumn(visibleColumns.contains("demand")).disabled(activity.entityType != "task")
             TextField("%",text:$progress).textFieldStyle(.plain).focused($editing).onSubmit { commit() }.frame(width:45).optionalColumn(visibleColumns.contains("progress")).disabled(activity.entityType == "summary")

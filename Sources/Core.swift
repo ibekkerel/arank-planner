@@ -739,6 +739,7 @@ final class ScheduleAnalysis {
     private var scales:[Int:TimelineCalendar] = [:]
     private var loadProfiles:[String:(Int,[ResourceDay])] = [:]
     private var ordered:[(activity:Activity,depth:Int)]?
+    private var parentOptions:[String:[Activity]] = [:]
     private(set) var calculationBuildCount = 0
     init(plan:Schedule,calculation:Calculation? = nil) {
         self.plan = plan
@@ -763,6 +764,13 @@ final class ScheduleAnalysis {
     var orderedActivities:[(activity:Activity,depth:Int)] {
         if let ordered { return ordered }
         let value = plan.orderedActivities; ordered = value; return value
+    }
+    func parentChoices(for id:String) -> [Activity] {
+        if let options = parentOptions[id] { return options }
+        let excluded = plan.descendants(of:id)
+        let options = plan.activities.filter { $0.entityType == "summary" && !excluded.contains($0.id) }
+        parentOptions[id] = options
+        return options
     }
     func loads(_ resource:Resource,days:Int) -> [ResourceDay] {
         if let entry = loadProfiles[resource.id], entry.0 == days { return entry.1 }
