@@ -111,6 +111,7 @@ struct Planner {
         }
         try ResourceCalendar.validate(plan)
         let resources = Dictionary(uniqueKeysWithValues: plan.resources.map { ($0.id,$0) })
+        let durations = Dictionary(uniqueKeysWithValues:plan.activities.map { ($0.id,plan.duration(of:$0)) })
         for a in plan.activities {
             guard a.duration >= 0, a.duration <= 100000, a.progress.isFinite, (0...100).contains(a.progress), a.units.isFinite, a.units > 0, a.resource.isEmpty || resources[a.resource] != nil else { throw PlanError.invalid("Неверные параметры работы \(a.id)") }
             if let v = a.volume { guard v.isFinite, v >= 0 else { throw PlanError.invalid("Объём должен быть неотрицательным числом") } }
@@ -128,7 +129,7 @@ struct Planner {
             guard (0...1000).contains(a.priority ?? 500) else { throw PlanError.invalid("Приоритет должен быть от 0 до 1000; большее число — раньше") }
             if a.entityType == "summary", a.requestedStart != nil || a.requestedFinish != nil || a.lockStart == true || a.lockFinish == true { throw PlanError.invalid("Даты суммарной задачи вычисляются по вложенным задачам") }
             if a.lockStart == true && a.requestedStart == nil || a.lockFinish == true && a.requestedFinish == nil { throw PlanError.invalid("Сначала назначьте фиксируемую дату") }
-            guard plan.duration(of:a) <= 100000 else { throw PlanError.invalid("Расчётная длительность превышает 100000 рабочих дней") }
+            guard durations[a.id]! <= 100000 else { throw PlanError.invalid("Расчётная длительность превышает 100000 рабочих дней") }
 
         }
         guard Set(plan.links.map(\.id)).count == plan.links.count else { throw PlanError.invalid("Повторяющиеся идентификаторы связей") }
@@ -161,13 +162,13 @@ struct Planner {
             return try CalendarScheduler.calculate(plan)
         }
         func weight(_ l: Link) -> Int {
-            let a = plan.duration(of:tasks[l.from]!), b = plan.duration(of:tasks[l.to]!)
+            let a = durations[l.from]!, b = durations[l.to]!
             switch l.type { case "SS": return l.lag; case "FF": return a - b + l.lag; case "SF": return -b + l.lag; default: return a + l.lag }
         }
         var lower:[String:Int] = [:], upper:[String:Int] = [:], exact:[String:Int] = [:]
         let horizon = 1000000
         for id in executableIDs {
-            let task = tasks[id]!, duration = plan.duration(of:tasks[id]!)
+            let task = tasks[id]!, duration = durations[id]!
             var lo = task.earliestStart ?? 0, hi = Int.max/4
             if let date = task.requestedStart {
                 let day = try offset(for:date,plan:plan); lo = max(lo,day)
@@ -191,10 +192,10 @@ struct Planner {
             var reservations:[String:[Reservation]] = [:]
             for id in executableIDs {
                 let task = tasks[id]!
-                if let fixed = exact[id], !task.resource.isEmpty, plan.duration(of:task) > 0 { reservations[task.resource,default:[]].append(Reservation(id:id,start:fixed,finish:fixed+plan.duration(of:task),units:task.units)) }
+                if let fixed = exact[id], !task.resource.isEmpty, durations[task.id]! > 0 { reservations[task.resource,default:[]].append(Reservation(id:id,start:fixed,finish:fixed+durations[task.id]!,units:task.units)) }
             }
             func feasible(_ id:String,_ start:Int) -> Bool {
-                let task = tasks[id]!, duration = plan.duration(of:tasks[id]!)
+                let task = tasks[id]!, duration = durations[id]!
                 guard duration > 0, let resource = resources[task.resource] else { return true }
                 var events:[Int:Double] = [start:task.units,start+duration:-task.units]
                 for entry in reservations[task.resource,default:[]] where entry.id != id && entry.start < start+duration && entry.finish > start {
@@ -204,18 +205,20 @@ struct Planner {
                 for day in events.keys.sorted() { load += events[day]!; if load > resource.capacity + 0.000001 { return false } }
                 return true
             }
-            var remaining = Set(executableIDs), scheduled = Set<String>()
             let originalIndex = Dictionary(uniqueKeysWithValues:executableIDs.enumerated().map { ($0.element,$0.offset) })
             let incoming = Dictionary(grouping:plan.links,by: \.to)
-            while !remaining.isEmpty {
-                let ready = remaining.filter { id in incoming[id,default:[]].allSatisfy { scheduled.contains($0.from) } }.sorted { a,b in
-                    let deadlineA = upper[a]! <= horizon ? upper[a]! : Int.max, deadlineB = upper[b]! <= horizon ? upper[b]! : Int.max
-                    if deadlineA != deadlineB { return deadlineA < deadlineB }
-                    if (tasks[a]!.priority ?? 500) != (tasks[b]!.priority ?? 500) { return (tasks[a]!.priority ?? 500) > (tasks[b]!.priority ?? 500) }
-                    return originalIndex[a]! < originalIndex[b]!
-                }
-                guard let id = ready.first else { throw PlanError.invalid("Не удалось выбрать следующую задачу") }
-                let task = tasks[id]!, duration = plan.duration(of:tasks[id]!)
+            var pendingParents = Dictionary(uniqueKeysWithValues:executableIDs.map { ($0,incoming[$0,default:[]].count) })
+            var ready = ReadyTaskQueue { a,b in
+                let deadlineA = upper[a]! <= horizon ? upper[a]! : Int.max, deadlineB = upper[b]! <= horizon ? upper[b]! : Int.max
+                if deadlineA != deadlineB { return deadlineA < deadlineB }
+                if (tasks[a]!.priority ?? 500) != (tasks[b]!.priority ?? 500) { return (tasks[a]!.priority ?? 500) > (tasks[b]!.priority ?? 500) }
+                return originalIndex[a]! < originalIndex[b]!
+            }
+            for id in executableIDs where pendingParents[id] == 0 { ready.insert(id) }
+            var scheduledCount = 0
+            while scheduledCount < executableIDs.count {
+                guard let id = ready.pop() else { throw PlanError.invalid("Не удалось выбрать следующую задачу") }
+                let task = tasks[id]!, duration = durations[id]!
                 if !task.resource.isEmpty, duration > 0, task.units > resources[task.resource]!.capacity + 0.000001 { throw PlanError.invalid("Потребность задачи \(id) превышает доступность ресурса") }
                 var start = lower[id]!
                 for link in incoming[id,default:[]] { start = max(start,early[link.from]!+weight(link)) }
@@ -228,17 +231,22 @@ struct Planner {
                 guard start <= upper[id]!, start <= horizon else { throw PlanError.invalid("Не найдено расписание для \(id) в пределах фиксированных дат. Измените приоритеты, доступность или ограничения.") }
                 early[id] = start
                 if exact[id] == nil, !task.resource.isEmpty, duration > 0 { reservations[task.resource,default:[]].append(Reservation(id:id,start:start,finish:start+duration,units:task.units)) }
-                remaining.remove(id); scheduled.insert(id)
+                scheduledCount += 1
+                for link in outgoing[id,default:[]] {
+                    pendingParents[link.to]! -= 1
+                    if pendingParents[link.to] == 0 { ready.insert(link.to) }
+                }
             }
         }
-        let end = executableIDs.map { early[$0]! + plan.duration(of:tasks[$0]!) }.max() ?? 0
-        var late = Dictionary(uniqueKeysWithValues:executableIDs.map { ($0,min(end-plan.duration(of:tasks[$0]!),upper[$0]!)) })
+        let end = executableIDs.map { early[$0]! + durations[$0]! }.max() ?? 0
+        var late = Dictionary(uniqueKeysWithValues:executableIDs.map { ($0,min(end-durations[$0]!,upper[$0]!)) })
         for id in order.reversed() { for link in outgoing[id,default:[]] { late[id] = min(late[id]!,late[link.to]!-weight(link)) } }
         var timings: [String:Timing] = [:]
-        for id in executableIDs { timings[id] = Timing(start:early[id]!,finish:early[id]! + plan.duration(of:tasks[id]!),lateStart:late[id]!,float:late[id]! - early[id]!) }
+        for id in executableIDs { timings[id] = Timing(start:early[id]!,finish:early[id]! + durations[id]!,lateStart:late[id]!,float:late[id]! - early[id]!) }
+        let childrenByParent = Dictionary(grouping:plan.activities,by:{ $0.parent ?? "" })
         func aggregate(_ id: String) -> Timing {
             if let t = timings[id] { return t }
-            let children = plan.activities.filter { $0.parent == id }.map { aggregate($0.id) }
+            let children = childrenByParent[id,default:[]].map { aggregate($0.id) }
             let start = children.map(\.start).min() ?? 0, finish = children.map(\.finish).max() ?? 0
             let reserve = children.map(\.float).min() ?? 0
             let t = Timing(start:start,finish:finish,lateStart:start + reserve,float:reserve)
@@ -248,12 +256,12 @@ struct Planner {
         var conflicts: [String] = []
         for r in plan.resources {
             var events: [Int:Double] = [:]
-            for a in plan.activities where a.resource == r.id && plan.duration(of:a) > 0 { let t = timings[a.id]!; events[t.start,default:0] += a.units; events[t.finish,default:0] -= a.units }
+            for a in plan.activities where a.resource == r.id && durations[a.id]! > 0 { let t = timings[a.id]!; events[t.start,default:0] += a.units; events[t.finish,default:0] -= a.units }
             var load = 0.0; var peak = 0.0
             for day in events.keys.sorted() { load += events[day]!; peak = max(peak,load) }
             if peak > r.capacity + 0.000001 { conflicts.append("\(r.name): пик \(String(format:"%.1f",peak)) при доступности \(String(format:"%.1f",r.capacity))") }
         }
-        let cost = plan.activities.reduce(0.0) { $0 + Double(plan.duration(of:$1)) * $1.units * (resources[$1.resource]?.dailyRate ?? 0) }
+        let cost = plan.activities.reduce(0.0) { $0 + Double(durations[$1.id]!) * $1.units * (resources[$1.resource]?.dailyRate ?? 0) }
         return Calculation(timings:timings,duration:end,conflicts:conflicts,cost:cost)
     }
     static func validDate(_ value: String) -> Bool {
@@ -315,8 +323,14 @@ struct Planner {
 extension Schedule {
     func children(of parent: String?) -> [Activity] { activities.filter { $0.parent == parent } }
     var orderedActivities: [(activity:Activity,depth:Int)] {
-        func walk(_ parent: String?, _ depth: Int) -> [(Activity,Int)] { children(of:parent).flatMap { [($0,depth)] + walk($0.id,depth+1) } }
-        return walk(nil,0)
+        let groups = Dictionary(grouping:activities,by:{ $0.parent ?? "" })
+        var result:[(activity:Activity,depth:Int)] = []
+        var stack = groups["",default:[]].reversed().map { ($0,0) }
+        while let (activity,depth) = stack.popLast() {
+            result.append((activity,depth))
+            for child in groups[activity.id,default:[]].reversed() { stack.append((child,depth+1)) }
+        }
+        return result
     }
     func descendants(of id: String) -> Set<String> { var result: Set<String> = [id]; for a in children(of:id) { result.formUnion(descendants(of:a.id)) }; return result }
 }
@@ -367,11 +381,11 @@ struct MoveProposal: Identifiable {
     var achieved: Bool { after.timings[activityID]?.start == requestedStart }
 }
 extension Planner {
-    static func move(_ plan:Schedule, activityID:String, to start:Int) throws -> MoveProposal {
+    static func move(_ plan:Schedule, activityID:String, to start:Int,before:Calculation? = nil) throws -> MoveProposal {
         guard let index = plan.activities.firstIndex(where:{ $0.id == activityID }), plan.activities[index].entityType != "summary", (0...100000).contains(start) else { throw PlanError.invalid("Перемещать можно задачи и вехи в пределах шкалы проекта") }
         guard plan.activities[index].lockStart != true, plan.activities[index].lockFinish != true else { throw PlanError.invalid("Дата задачи зафиксирована. Снимите флажок фиксации перед переносом.") }
         var proposed = plan; proposed.activities[index].earliestStart = start; proposed.activities[index].requestedStart = nil; proposed.activities[index].requestedFinish = nil
-        return MoveProposal(original:plan,proposed:proposed,activityID:activityID,requestedStart:start,before:try calculate(plan),after:try calculate(proposed))
+        return MoveProposal(original:plan,proposed:proposed,activityID:activityID,requestedStart:start,before:try before ?? calculate(plan),after:try calculate(proposed))
     }
     static func finishDate(_ timing:Timing, plan:Schedule) -> String { date(timing.finish > timing.start ? timing.finish-1 : timing.finish,plan:plan) }
     static func projectFinishDate(_ calculation:Calculation, plan:Schedule) -> String {
@@ -450,18 +464,15 @@ struct TimelineCalendar {
     let dates:[String]
     let years:[TimelineBand]
     let months:[TimelineBand]
-    init(plan:Schedule,count:Int) {
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX"); formatter.timeZone = TimeZone(identifier:plan.calendar.timezone); formatter.dateFormat = "yyyy-MM-dd"
-        var calendar = Calendar(identifier:.gregorian); calendar.timeZone = formatter.timeZone
-        var current = formatter.date(from:plan.startDate)!
+    init(plan:Schedule,count:Int,axis:ResourceAvailability? = nil) {
+        let axis = axis ?? ResourceAvailability(plan)
         let names = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
         var dates:[String] = [], years:[TimelineBand] = [], months:[TimelineBand] = []
         for index in 0..<max(0,count) {
-            while !plan.calendar.weekdays.contains(calendar.component(.weekday,from:current)) || plan.calendar.holidays.contains(formatter.string(from:current)) { current = calendar.date(byAdding:.day,value:1,to:current)! }
-            let date = formatter.string(from:current), year = String(date.prefix(4)), month = names[calendar.component(.month,from:current)-1]
+            let date = axis.date(index), year = String(date.prefix(4)), month = names[(Int(date.dropFirst(5).prefix(2)) ?? 1)-1]
             if years.last?.label == year { years[years.count-1].count += 1 } else { years.append(TimelineBand(start:index,count:1,label:year)) }
             if months.last?.label == month && dates.last?.prefix(4) == date.prefix(4) { months[months.count-1].count += 1 } else { months.append(TimelineBand(start:index,count:1,label:month)) }
-            dates.append(date); current = calendar.date(byAdding:.day,value:1,to:current)!
+            dates.append(date)
         }
         self.dates = dates; self.years = years; self.months = months
     }
@@ -664,7 +675,29 @@ enum CalendarScheduler {
 
 extension Planner {
     static func loads(resource:Resource,days:Int,plan:Schedule,result:Calculation) -> [ResourceDay] {
-        guard plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) else { return (0..<days).map { load(resource:resource,day:$0,plan:plan,result:result) } }
+        guard days > 0 else { return [] }
+        guard plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) else {
+            var quantity = Array(repeating:0.0,count:days+1), output = quantity
+            let type = plan.resourceTypes.first { $0.id == resource.typeID }
+            let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol
+            for task in plan.activities where task.resource == resource.id {
+                guard let timing = result.timings[task.id] else { continue }
+                let start = max(0,timing.start), end = min(days,timing.finish)
+                guard start < end else { continue }
+                quantity[start] += task.units; quantity[end] -= task.units
+                if let volume = task.volume, task.volumeUnit == symbol, let rate = task.productivity ?? resource.productivity.map({ $0*task.units }), rate > 0 {
+                    let fullDays = min(end-start,max(0,Int(floor(volume/rate))-max(0,start-timing.start)))
+                    if fullDays > 0 { output[start] += rate; output[start+fullDays] -= rate }
+                    let partialDay = timing.start+Int(floor(volume/rate)), remainder = volume-rate*floor(volume/rate)
+                    if partialDay >= start && partialDay < end && remainder > 0 { output[partialDay] += remainder; output[partialDay+1] -= remainder }
+                }
+            }
+            var used = 0.0, produced = 0.0
+            return (0..<days).map { day in
+                used += quantity[day]; produced += output[day]
+                return ResourceDay(quantity:abs(used) < 0.000000001 ? 0 : used,capacity:resource.capacity,output:abs(produced) < 0.000000001 ? 0 : produced,outputCapacity:resource.productivity.map { $0*resource.capacity })
+            }
+        }
         let availability = ResourceAvailability(plan)
         var quantity = Array(repeating:0.0,count:days), output = quantity
         for task in plan.activities where task.resource == resource.id {
@@ -675,5 +708,73 @@ extension Planner {
             let hours = availability.hours(resource,day:day)
             return ResourceDay(quantity:quantity[day],capacity:hours > 0 ? resource.capacity : 0,output:output[day],outputCapacity:resource.productivity.map { $0*resource.capacity*(resource.timeUnit == "hour" ? hours : hours/8) })
         }
+    }
+}
+
+// An immutable project revision owns its derived data. UI-only changes reuse it;
+// replacing the project discards the entire snapshot, including failed results.
+final class ScheduleAnalysis {
+    let plan:Schedule
+    private var calculated:Result<Calculation,Error>?
+    private var axis:ResourceAvailability?
+    private var scales:[Int:TimelineCalendar] = [:]
+    private var loadProfiles:[String:(Int,[ResourceDay])] = [:]
+    private var ordered:[(activity:Activity,depth:Int)]?
+    private(set) var calculationBuildCount = 0
+    init(plan:Schedule,calculation:Calculation? = nil) {
+        self.plan = plan
+        if let calculation { calculated = .success(calculation) }
+    }
+    func calculation() throws -> Calculation {
+        if let calculated { return try calculated.get() }
+        calculationBuildCount += 1
+        let value = Result { try Planner.calculate(plan) }; calculated = value
+        return try value.get()
+    }
+    private var dateAxis:ResourceAvailability {
+        if let axis { return axis }
+        let value = ResourceAvailability(plan); axis = value; return value
+    }
+    func date(_ day:Int) -> String { dateAxis.date(max(0,day)) }
+    func timeline(_ count:Int) -> TimelineCalendar {
+        if let value = scales[count] { return value }
+        let value = TimelineCalendar(plan:plan,count:count,axis:dateAxis)
+        scales = [count:value]; return value
+    }
+    var orderedActivities:[(activity:Activity,depth:Int)] {
+        if let ordered { return ordered }
+        let value = plan.orderedActivities; ordered = value; return value
+    }
+    func loads(_ resource:Resource,days:Int) -> [ResourceDay] {
+        if let entry = loadProfiles[resource.id], entry.0 == days { return entry.1 }
+        guard let result = try? calculation() else { return [] }
+        let value = Planner.loads(resource:resource,days:days,plan:plan,result:result)
+        loadProfiles[resource.id] = (days,value); return value
+    }
+}
+
+private struct ReadyTaskQueue {
+    private var heap:[String] = []
+    let precedes:(String,String)->Bool
+    init(precedes:@escaping(String,String)->Bool) { self.precedes = precedes }
+    mutating func insert(_ id:String) {
+        heap.append(id); var child = heap.count-1
+        while child > 0 {
+            let parent = (child-1)/2
+            guard precedes(heap[child],heap[parent]) else { break }
+            heap.swapAt(child,parent); child = parent
+        }
+    }
+    mutating func pop() -> String? {
+        guard !heap.isEmpty else { return nil }
+        if heap.count == 1 { return heap.removeLast() }
+        let first = heap[0]; heap[0] = heap.removeLast(); var parent = 0
+        while parent*2+1 < heap.count {
+            let left = parent*2+1, right = left+1
+            let child = right < heap.count && precedes(heap[right],heap[left]) ? right : left
+            guard precedes(heap[child],heap[parent]) else { break }
+            heap.swapAt(child,parent); parent = child
+        }
+        return first
     }
 }

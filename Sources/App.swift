@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor final class Workspace: ObservableObject {
-    @Published var plan = Schedule.demo
+    @Published var plan = Schedule.demo { didSet { analysis = nil } }
     @Published var selection: String? = "A"
     @Published var selectedIDs: Set<String> = []
     @Published var propertyActivity: Activity?
@@ -11,10 +11,18 @@ import UniformTypeIdentifiers
     @Published var url: URL?
     @Published var dirty = false
     @Published var pendingMove: MoveProposal?
-    var result: Calculation? { try? Planner.calculate(plan) }
+    private var analysis:ScheduleAnalysis?
+    var snapshot:ScheduleAnalysis {
+        if let analysis { return analysis }
+        let value = ScheduleAnalysis(plan:plan); analysis = value; return value
+    }
+    var result: Calculation? { try? snapshot.calculation() }
+    func install(_ next:Schedule,calculation:Calculation) { plan = next; analysis = ScheduleAnalysis(plan:next,calculation:calculation) }
+    func date(_ offset:Int) -> String { snapshot.date(offset) }
     func change(_ body: (inout Schedule) -> Void) {
         var next = plan; body(&next)
-        do { _ = try Planner.calculate(next); plan = next; dirty = true } catch { self.error = error.localizedDescription }
+        guard next != plan else { return }
+        do { let result = try Planner.calculate(next); install(next,calculation:result); dirty = true } catch { self.error = error.localizedDescription }
     }
     func save(asNew: Bool = false) -> Bool {
         var target = asNew ? nil : url
@@ -54,10 +62,10 @@ import UniformTypeIdentifiers
     }
     func move(_ id:String,to start:Int) {
         do {
-            let proposal = try Planner.move(plan,activityID:id,to:start)
+            let proposal = try Planner.move(plan,activityID:id,to:start,before:result)
             if proposal.before.timings[id]?.start == start { return }
             if proposal.linked { pendingMove = proposal }
-            else { plan = proposal.proposed; dirty = true }
+            else { install(proposal.proposed,calculation:proposal.after); dirty = true }
         } catch { self.error = error.localizedDescription }
     }
     func baseline() { guard let r = result else { return }; change { p in p.baseline = r.timings.mapValues { BaselineItem(start:$0.start,finish:$0.finish) } } }
@@ -104,9 +112,10 @@ struct MainView: View {
     }
 
     var rows: [(activity:Activity,depth:Int)] {
-        w.plan.orderedActivities.filter { entry in
-            var parent = entry.activity.parent
-            while let id = parent { if collapsed.contains(id) { return false }; parent = w.plan.activities.first { $0.id == id }?.parent }
+        var hiddenDepth:Int?
+        return w.snapshot.orderedActivities.filter { entry in
+            if let depth = hiddenDepth, entry.depth > depth { return false }
+            hiddenDepth = collapsed.contains(entry.activity.id) ? entry.depth : nil
             return true
         }
     }
@@ -174,7 +183,7 @@ struct MainView: View {
                     let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
                     VStack(spacing:0) {
                     ScrollView([.horizontal,.vertical]) {
-                        VStack(alignment:.leading,spacing:0) {
+                        LazyVStack(alignment:.leading,spacing:0) {
                             header(days:days,dayWidth:dayWidth,chartWidth:chartWidth,tableWidth:tableWidth)
                             ForEach(rows,id:\.activity.id) { row in
                                 HStack(spacing:0) {
@@ -276,7 +285,7 @@ struct MainView: View {
                     Text(field.title).font(.caption.bold()).frame(width:field.width,alignment:.leading)
                 }
             }.frame(width:contentWidth,height:32,alignment:.leading).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
-            TimelineHeader(plan:w.plan,days:days,dayWidth:dayWidth).frame(width:chartWidth,alignment:.leading)
+            TimelineHeader(scale:w.snapshot.timeline(days),dayWidth:dayWidth).frame(width:chartWidth,alignment:.leading)
         }.frame(height:TimelineHeader.height).background(Color(nsColor:.controlBackgroundColor))
     }
 }
@@ -565,7 +574,7 @@ struct MoveConfirmation: View {
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
             HStack { Button("Отмена") { dismiss() }.keyboardShortcut(.cancelAction); Spacer(); Button("Применить перенос") {
                 guard w.plan == proposal.original else { error = "График изменился после расчёта. Отмените перенос и повторите его."; return }
-                w.plan = proposal.proposed; w.dirty = true; dismiss()
+                w.install(proposal.proposed,calculation:proposal.after); w.dirty = true; dismiss()
             }.buttonStyle(.borderedProminent).disabled(!proposal.achieved).keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width:660)
     }
@@ -621,7 +630,7 @@ struct TaskDateCell: View {
     let activity:Activity
     let finish:Bool
     @State private var text = ""
-    var calculated:String { guard let timing = w.result?.timings[activity.id] else { return "" }; return finish ? Planner.finishDate(timing,plan:w.plan) : Planner.date(timing.start,plan:w.plan) }
+    var calculated:String { guard let timing = w.result?.timings[activity.id] else { return "" }; return w.date(finish && timing.finish > timing.start ? timing.finish-1 : (finish ? timing.finish : timing.start)) }
     var locked:Bool { finish ? activity.lockFinish == true : activity.lockStart == true }
     var requested:String? { finish ? activity.requestedFinish : activity.requestedStart }
     func update(_ body:(inout Activity)->Void) { w.change { p in if let i = p.activities.firstIndex(where:{ $0.id == activity.id }) { body(&p.activities[i]) } }; text = calculated }
@@ -633,7 +642,7 @@ struct TaskDateCell: View {
                 next.activities[i].earliestStart = nil
                 if finish { next.activities[i].requestedFinish = value.isEmpty ? nil : value; if value.isEmpty { next.activities[i].lockFinish = false } }
                 else { next.activities[i].requestedStart = value.isEmpty ? nil : value; if value.isEmpty { next.activities[i].lockStart = false } }
-                do { _ = try Planner.calculate(next); w.plan = next; w.dirty = true; text = calculated; return nil } catch { return error.localizedDescription }
+                do { let result = try Planner.calculate(next); w.install(next,calculation:result); w.dirty = true; text = calculated; return nil } catch { return error.localizedDescription }
             }.help("Расчёт: \(calculated). Назначено: \(requested ?? "нет"). Нажмите для выбора в календаре.")
             Toggle(finish ? "Фиксировать окончание \(activity.id)" : "Фиксировать начало \(activity.id)",isOn:Binding(get:{ locked },set:{ value in
                 let date = text.isEmpty ? calculated : text
@@ -675,12 +684,13 @@ struct TaskProperties: View {
                 var next = w.plan
                 guard let i = next.activities.firstIndex(where:{ $0.id == activity.id }) else { error = "Задача удалена"; return }
                 next.activities[i] = draft
-                do { _ = try Planner.calculate(next); w.plan = next; w.dirty = true; dismiss() } catch { self.error = error.localizedDescription }
+                do { let result = try Planner.calculate(next); w.install(next,calculation:result); w.dirty = true; dismiss() } catch { self.error = error.localizedDescription }
             }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width:580)
     }
 }
 struct ResourceLoadPanel: View {
+    @EnvironmentObject var w:Workspace
     let plan:Schedule
     let result:Calculation
     let tableWidth:CGFloat
@@ -699,14 +709,14 @@ struct ResourceLoadPanel: View {
                     ForEach(plan.resources) { resource in
                         let type = plan.resourceTypes.first { $0.id == resource.typeID }
                         let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol ?? "ед."
-                        let loads = Planner.loads(resource:resource,days:days,plan:plan,result:result)
+                        let loads = w.snapshot.loads(resource,days:days)
                         HStack(spacing:0) {
                             HStack { Text(resource.name).bold(); Text("Доступно: \(resource.capacity.formatted())").foregroundStyle(.secondary); if let p = resource.productivity { Text("Выработка: \(p.formatted()) \(symbol)/\(resource.timeUnit == "hour" ? "ч" : "дн") на единицу").foregroundStyle(.secondary) }; Spacer() }.font(.caption).padding(.leading,10).frame(width:tableWidth)
                             HStack(spacing:0) {
                                 ForEach(0..<days,id:\.self) { day in
                                     let load = loads[day]
                                     let ratio = load.capacity > 0 ? load.quantity/load.capacity : 0
-                                    VStack(spacing:1) { if dayWidth > 28 { Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)) }; if dayWidth > 50 && load.output > 0 { Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)) } }.frame(width:dayWidth,height:33).background(ratio > 1.000001 ? Color.orange.opacity(0.75) : (load.capacity == 0 ? Color.secondary.opacity(0.16) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65))))).overlay { Rectangle().stroke(Color.secondary.opacity(0.1),lineWidth:0.5) }.help("\(Planner.date(day,plan:plan)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); \(load.capacity == 0 ? "Нерабочий день; " : "")плановая выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн.")
+                                    VStack(spacing:1) { if dayWidth > 28 { Text("\((ratio*100).formatted(.number.precision(.fractionLength(0))))%").font(.system(size:9)) }; if dayWidth > 50 && load.output > 0 { Text(load.output.formatted(.number.precision(.fractionLength(1)))).font(.system(size:8)) } }.frame(width:dayWidth,height:33).background(ratio > 1.000001 ? Color.orange.opacity(0.75) : (load.capacity == 0 ? Color.secondary.opacity(0.16) : Color.teal.opacity(min(0.8,max(0.03,ratio*0.65))))).overlay { Rectangle().stroke(Color.secondary.opacity(0.1),lineWidth:0.5) }.help("\(w.date(day)): занято \(load.quantity.formatted()) из \(load.capacity.formatted()); \(load.capacity == 0 ? "Нерабочий день; " : "")плановая выработка \(load.output.formatted()) \(symbol); мощность \(load.outputCapacity?.formatted() ?? "не задана") \(symbol)/дн.")
                                 }
                             }.frame(width:chartWidth,alignment:.leading)
                         }.frame(height:34)

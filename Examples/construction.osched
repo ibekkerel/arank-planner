@@ -103,54 +103,54 @@
   },
   "currency" : "RUB",
   "format" : "OpenSchedule",
-  "id" : "0B40FAFE-6933-4903-AA46-1C3ACD17B736",
+  "id" : "66F8D936-3614-4DA8-A92D-FD2EE923B7CC",
   "levelResources" : true,
   "links" : [
     {
       "from" : "A",
-      "id" : "80DDE021-B79B-463A-AE91-72FDC17A2360",
+      "id" : "8C9EB7EB-DC74-4D79-9C1F-692326247DF6",
       "lag" : 0,
       "to" : "B",
       "type" : "FS"
     },
     {
       "from" : "A",
-      "id" : "652CE15B-2759-444B-9420-B7B2BF7F76BE",
+      "id" : "D417C8E1-B851-465E-AAD0-8F24E4AE1232",
       "lag" : 0,
       "to" : "C",
       "type" : "FS"
     },
     {
       "from" : "B",
-      "id" : "845CF846-2303-4187-AF51-279000C2E241",
+      "id" : "955E3DD5-B7C4-41D0-ACFE-50D95B93706A",
       "lag" : 0,
       "to" : "D",
       "type" : "FS"
     },
     {
       "from" : "D",
-      "id" : "3B2DBBAC-B595-45AD-913B-15D6BA0241DF",
+      "id" : "773AC53D-C030-45FD-8F05-9383779B3EEA",
       "lag" : 0,
       "to" : "E",
       "type" : "FS"
     },
     {
       "from" : "C",
-      "id" : "D810DA79-A3CE-4837-AB93-7836D42766F7",
+      "id" : "E24ECFEE-9708-4EED-AC81-BF13D5A7483D",
       "lag" : 0,
       "to" : "E",
       "type" : "FS"
     },
     {
       "from" : "E",
-      "id" : "528EEC74-032E-46BD-999A-B4B84D22B202",
+      "id" : "D8CECA6D-AD9D-4415-8A6E-3C6FE423371A",
       "lag" : 0,
       "to" : "F",
       "type" : "FS"
     },
     {
       "from" : "F",
-      "id" : "6E3F1128-30CA-4A27-9D67-90FEABBD0127",
+      "id" : "087863FD-F633-4FB2-A08A-E158BE32FD9E",
       "lag" : 0,
       "to" : "G",
       "type" : "FS"

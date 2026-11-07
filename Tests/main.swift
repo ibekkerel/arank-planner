@@ -223,4 +223,37 @@ priorityCalendar.activities[0].priority = 100
 priorityCalendar.activities.append(Activity(id:"urgent",name:"Urgent",duration:1,resource:"r",priority:900))
 let priorityCalendarResult = try Planner.calculate(priorityCalendar)
 expect(priorityCalendarResult.timings["urgent"]!.start == 0 && priorityCalendarResult.timings["a"]!.start >= priorityCalendarResult.timings["urgent"]!.finish,"priority respected with shifts")
+
+
+let cachedAnalysis = ScheduleAnalysis(plan:Schedule.demo)
+for _ in 0..<20 { _ = try cachedAnalysis.calculation() }
+expect(cachedAnalysis.calculationBuildCount == 1,"one calculation per immutable revision")
+let seededAnalysis = ScheduleAnalysis(plan:Schedule.demo,calculation:try Planner.calculate(.demo))
+_ = try seededAnalysis.calculation()
+expect(seededAnalysis.calculationBuildCount == 0,"validated result reused without recalculation")
+var changedRevision = Schedule.demo; changedRevision.activities[0].duration = 8
+let changedAnalysis = ScheduleAnalysis(plan:changedRevision)
+expect(try changedAnalysis.calculation().duration != cachedAnalysis.calculation().duration,"new project revision gets fresh calculation")
+expect(cachedAnalysis.calculationBuildCount == 1 && changedAnalysis.calculationBuildCount == 1,"revisions do not share stale results")
+var invalidRevision = Schedule.demo; invalidRevision.activities[0].duration = -1
+let failedAnalysis = ScheduleAnalysis(plan:invalidRevision)
+for _ in 0..<2 { do { _ = try failedAnalysis.calculation(); fatalError("cached invalid revision accepted") } catch {} }
+expect(failedAnalysis.calculationBuildCount == 1,"failed revision is also cached")
+for day in 0..<30 { expect(cachedAnalysis.date(day) == Planner.date(day,plan:.demo),"cached date agrees with reference") }
+expect(cachedAnalysis.timeline(40).dates == TimelineCalendar(plan:.demo,count:40).dates,"cached header calendar agrees")
+for plan in [partial,calendarReload,Schedule.demo] {
+ let calculated = try Planner.calculate(plan)
+ for resource in plan.resources {
+  let days = calculated.duration+5
+  let loads = Planner.loads(resource:resource,days:days,plan:plan,result:calculated)
+  for day in 0..<days {
+   let reference = Planner.load(resource:resource,day:day,plan:plan,result:calculated), actual = loads[day]
+   expect(abs(actual.quantity-reference.quantity) < 0.000001 && abs(actual.output-reference.output) < 0.000001 && actual.capacity == reference.capacity,"batch load matches day-by-day reference")
+  }
+ }
+}
+var deepHierarchy:[Activity] = []
+for i in 0..<1000 { deepHierarchy.append(Activity(id:"s\(i)",name:"Summary",duration:0,kind:"summary",parent:i == 0 ? nil : "s\(i-1)")) }
+let deepRows = Schedule(name:"Deep",activities:deepHierarchy,links:[],resources:[]).orderedActivities
+expect(deepRows.count == 1000 && deepRows.last?.depth == 999,"iterative hierarchy preserves depth without recursive expansion")
 print("PASS: \(checks) checks")

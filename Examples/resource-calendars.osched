@@ -33,7 +33,7 @@
   },
   "currency" : "RUB",
   "format" : "OpenSchedule",
-  "id" : "511B8FD9-E86A-43CA-9F27-CA6DA962AC43",
+  "id" : "B0AB0492-5291-4F58-A79E-71F593E34087",
   "levelResources" : false,
   "links" : [
 
@@ -44,7 +44,7 @@
       "exceptions" : [
         {
           "from" : "2026-11-10",
-          "id" : "ADEC6E03-10A3-45CC-A9FE-17A17F1B1443",
+          "id" : "E071DE13-F12E-4E56-A6AE-9A71E8FFE721",
           "intervals" : [
 
           ],
@@ -54,7 +54,7 @@
         },
         {
           "from" : "2026-11-11",
-          "id" : "DBD65FF9-80E4-4F75-A368-2014828786FD",
+          "id" : "7C2027EF-D99D-4818-AD92-784A2F6F9BC3",
           "intervals" : [
             {
               "end" : 1020,

@@ -93,11 +93,10 @@ final class KeyboardSurface:NSView {
 
 struct TimelineHeader:View {
     static let height:CGFloat = 76
-    let plan:Schedule
-    let days:Int
+    let scale:TimelineCalendar
     let dayWidth:CGFloat
+    var days:Int { scale.dates.count }
     var body: some View {
-        let scale = TimelineCalendar(plan:plan,count:days)
         VStack(alignment:.leading,spacing:0) {
             bands(scale.years,emphasized:true)
             bands(scale.months,emphasized:false)

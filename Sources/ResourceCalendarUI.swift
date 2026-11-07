@@ -52,7 +52,7 @@ struct ResourceCalendarEditor:View {
             var next = w.plan
             if let index = next.resourceCalendars?.firstIndex(where:{ $0.id == value.id }) { next.resourceCalendars![index] = value }
             else { if next.resourceCalendars == nil { next.resourceCalendars = [] }; next.resourceCalendars!.append(value) }
-            _ = try Planner.calculate(next); w.plan = next; w.dirty = true; dismiss()
+            let result = try Planner.calculate(next); w.install(next,calculation:result); w.dirty = true; dismiss()
         } catch { self.error = error.localizedDescription }
     }
 }
