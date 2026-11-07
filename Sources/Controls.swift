@@ -116,3 +116,22 @@ struct TimelineHeader:View {
         }
     }
 }
+
+struct ScheduleColumn:Identifiable {
+    let id:String
+    let title:String
+    let width:CGFloat
+    static let all:[ScheduleColumn] = [
+        .init(id:"select",title:"✓",width:26),.init(id:"code",title:"Код",width:45),
+        .init(id:"kind",title:"Тип",width:95),.init(id:"name",title:"Название задачи",width:210),
+        .init(id:"duration",title:"Длительность",width:100),.init(id:"start",title:"Начало · фикс.",width:125),
+        .init(id:"finish",title:"Окончание · фикс.",width:125),.init(id:"volume",title:"Объём",width:75),
+        .init(id:"unit",title:"Ед. изм.",width:65),.init(id:"parent",title:"Родитель",width:100),
+        .init(id:"resource",title:"Ресурс",width:125),.init(id:"priority",title:"Приоритет",width:70),
+        .init(id:"demand",title:"Потребн.",width:50),.init(id:"progress",title:"%",width:45),
+        .init(id:"menu",title:"",width:40)
+    ]
+}
+extension View {
+    @ViewBuilder func optionalColumn(_ visible:Bool) -> some View { if visible { self } }
+}
