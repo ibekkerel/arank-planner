@@ -149,6 +149,19 @@ struct MainView: View {
                         Divider().frame(height:54)
                         ribbonGroup("Вид") {
                             Menu {
+                                Button("Раскрыть всё") { collapsed.removeAll() }
+                                Button("Свернуть всё") {
+                                    collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" }.map { $0.activity.id })
+                                }
+                                Divider()
+                                ForEach(1...max(1,(w.snapshot.orderedActivities.map { $0.depth }.max() ?? 0)+1),id:\.self) { level in
+                                    Button("Показать до уровня \(level)") {
+                                        collapsed = Set(w.snapshot.orderedActivities.filter { $0.activity.entityType == "summary" && $0.depth >= level-1 }.map { $0.activity.id })
+                                    }
+                                }
+                            } label: { Label("Уровни",systemImage:"list.bullet.indent") }
+                            .help("Раскрытие и сворачивание иерархии задач; корневые строки — уровень 1")
+                            Menu {
                                 ForEach(ScheduleColumn.all.filter { !["select","name","menu"].contains($0.id) }) { field in
                                     Toggle(field.title,isOn:Binding(get:{ visibleColumns.contains(field.id) },set:{ setColumn(field.id,$0) }))
                                 }
