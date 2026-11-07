@@ -11,18 +11,40 @@ import UniformTypeIdentifiers
     @Published var url: URL?
     @Published var dirty = false
     @Published var pendingMove: MoveProposal?
+    @Published private(set) var automaticCalculation = true
+    @Published private(set) var needsCalculation = false
+    private var previousAnalysis:ScheduleAnalysis?
     private var analysis:ScheduleAnalysis?
     var snapshot:ScheduleAnalysis {
         if let analysis { return analysis }
         let value = ScheduleAnalysis(plan:plan); analysis = value; return value
     }
-    var result: Calculation? { try? snapshot.calculation() }
-    func install(_ next:Schedule,calculation:Calculation) { plan = next; analysis = ScheduleAnalysis(plan:next,calculation:calculation) }
-    func date(_ offset:Int) -> String { snapshot.date(offset) }
+    var displayedSnapshot:ScheduleAnalysis { needsCalculation ? (previousAnalysis ?? snapshot) : snapshot }
+    var result: Calculation? { try? displayedSnapshot.calculation() }
+    func recalculate() -> Bool {
+        do { let value = try Planner.calculate(plan); install(plan,calculation:value); return true }
+        catch { self.error = error.localizedDescription; return false }
+    }
+    func setAutomaticCalculation(_ enabled:Bool) {
+        guard enabled != automaticCalculation else { return }
+        if enabled && needsCalculation && !recalculate() { return }
+        automaticCalculation = enabled
+    }
+    func accept(_ next:Schedule) throws {
+        if automaticCalculation { install(next,calculation:try Planner.calculate(next)) }
+        else {
+            _ = try Planner.calculate(next,validationOnly:true)
+            if !needsCalculation { previousAnalysis = snapshot; _ = try previousAnalysis?.calculation() }
+            plan = next; needsCalculation = true
+        }
+        dirty = true
+    }
+    func install(_ next:Schedule,calculation:Calculation) { plan = next; analysis = ScheduleAnalysis(plan:next,calculation:calculation); previousAnalysis = nil; needsCalculation = false }
+    func date(_ offset:Int) -> String { displayedSnapshot.date(offset) }
     func change(_ body: (inout Schedule) -> Void) {
         var next = plan; body(&next)
         guard next != plan else { return }
-        do { let result = try Planner.calculate(next); install(next,calculation:result); dirty = true } catch { self.error = error.localizedDescription }
+        do { try accept(next) } catch { self.error = error.localizedDescription }
     }
     func save(asNew: Bool = false) -> Bool {
         var target = asNew ? nil : url
@@ -41,7 +63,7 @@ import UniformTypeIdentifiers
         guard canReplace() else { return }
         let p = NSOpenPanel(); p.allowedContentTypes = [UTType(filenameExtension:"osched") ?? .json,.json]
         guard p.runModal() == .OK, let u = p.url else { return }
-        do { plan = try Planner.load(u); url = u; dirty = false; selection = plan.activities.first?.id; selectedIDs = [] } catch { self.error = error.localizedDescription }
+        do { plan = try Planner.load(u); previousAnalysis = nil; needsCalculation = false; url = u; dirty = false; selection = plan.activities.first?.id; selectedIDs = [] } catch { self.error = error.localizedDescription }
     }
     func select(_ id:String,order:[String]) {
         let modifiers = NSEvent.modifierFlags
@@ -57,10 +79,11 @@ import UniformTypeIdentifiers
         selectedIDs.subtract(ids); if let current = selection, ids.contains(current) { selection = nil }
     }
     func groupSelection() {
-        do { let oldIDs = Set(plan.activities.map(\.id)); plan = try Planner.group(plan,ids:selectedIDs); dirty = true; selection = plan.activities.first { !oldIDs.contains($0.id) }?.id; selectedIDs = Set(selection.map { [$0] } ?? []) }
+        do { let oldIDs = Set(plan.activities.map(\.id)); try accept(Planner.group(plan,ids:selectedIDs,deferCalculation:!automaticCalculation)); selection = plan.activities.first { !oldIDs.contains($0.id) }?.id; selectedIDs = Set(selection.map { [$0] } ?? []) }
         catch { self.error = error.localizedDescription }
     }
     func move(_ id:String,to start:Int) {
+        if needsCalculation && !recalculate() { return }
         do {
             let proposal = try Planner.move(plan,activityID:id,to:start,before:result)
             if proposal.before.timings[id]?.start == start { return }
@@ -68,7 +91,7 @@ import UniformTypeIdentifiers
             else { install(proposal.proposed,calculation:proposal.after); dirty = true }
         } catch { self.error = error.localizedDescription }
     }
-    func baseline() { guard let r = result else { return }; change { p in p.baseline = r.timings.mapValues { BaselineItem(start:$0.start,finish:$0.finish) } } }
+    func baseline() { if needsCalculation && !recalculate() { return }; guard let r = result else { return }; change { p in p.baseline = r.timings.mapValues { BaselineItem(start:$0.start,finish:$0.finish) } } }
 }
 final class Lifecycle: NSObject, NSApplicationDelegate {
     var workspace: Workspace?
@@ -81,7 +104,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     var body: some Scene {
         WindowGroup("Arank Planner") { MainView().environmentObject(w).frame(minWidth:1120,minHeight:720).onAppear { delegate.workspace = w; NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.activate(ignoringOtherApps:true) } }
         .commands {
-            CommandGroup(replacing:.newItem) { Button("Новый проект") { if w.canReplace() { w.plan = Schedule(name:"Новый проект",activities:[],links:[],resources:[]); w.url = nil; w.selection = nil; w.selectedIDs = []; w.dirty = false } }.keyboardShortcut("n"); Button("Открыть…") { w.open() }.keyboardShortcut("o") }
+            CommandGroup(replacing:.newItem) { Button("Новый проект") { if w.canReplace() { w.install(Schedule(name:"Новый проект",activities:[],links:[],resources:[]),calculation:Calculation(timings:[:],duration:0,conflicts:[],cost:0)); w.url = nil; w.selection = nil; w.selectedIDs = []; w.dirty = false } }.keyboardShortcut("n"); Button("Открыть…") { w.open() }.keyboardShortcut("o") }
             CommandGroup(replacing:.saveItem) { Button("Сохранить") { _ = w.save() }.keyboardShortcut("s"); Button("Сохранить как…") { _ = w.save(asNew:true) }.keyboardShortcut("s",modifiers:[.command,.shift]) }
         }
     }
@@ -142,6 +165,15 @@ struct MainView: View {
                         }
                         Divider().frame(height:54)
                         ribbonGroup("Расчёт") {
+                            Picker("Режим расчёта",selection:Binding(get:{ w.automaticCalculation },set:{ w.setAutomaticCalculation($0) })) {
+                                Label("Авто",systemImage:"bolt.fill").tag(true)
+                                Label("Вручную",systemImage:"hand.raised.fill").tag(false)
+                            }.pickerStyle(.segmented).frame(width:190).help("Авто — расчёт после каждого изменения; вручную — по кнопке")
+                            if !w.automaticCalculation {
+                                Button { _ = w.recalculate() } label: { Label(w.needsCalculation ? "Пересчитать •" : "Пересчитать",systemImage:"arrow.clockwise") }
+                                    .tint(w.needsCalculation ? .orange : .teal)
+                                    .help(w.needsCalculation ? "Даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
+                            }
                             Toggle("По ресурсам",isOn:Binding(get:{ w.plan.levelResources ?? true },set:{ enabled in w.change { $0.levelResources = enabled } })).toggleStyle(.checkbox)
                             Button("Базовый план") { w.baseline() }
                             Button("Связи",systemImage:"arrow.triangle.branch") { showLinks.toggle() }
@@ -184,6 +216,10 @@ struct MainView: View {
                         }
                     }.padding(.horizontal,16).padding(.vertical,8)
                 }.fixedSize(horizontal:false,vertical:true).background(Color(nsColor:.controlBackgroundColor))
+                if w.needsCalculation {
+                    Label("Есть изменения — требуется пересчёт. Даты, полосы и загрузка показаны по предыдущему расчёту.",systemImage:"exclamationmark.arrow.triangle.2.circlepath")
+                        .font(.caption).foregroundStyle(.orange).frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,16).padding(.vertical,5)
+                }
                 if showMetrics, let r = w.result {
                     HStack { Metric(title:"ДЛИТЕЛЬНОСТЬ",value:"\(r.duration) раб. дн."); Metric(title:"ЗАТРАТЫ",value:"\(r.cost.formatted(.number.precision(.fractionLength(0)))) \(w.plan.currency)"); Metric(title:"ПЕРЕГРУЗКИ",value:"\(r.conflicts.count)") }.padding(10)
                 }
@@ -260,7 +296,7 @@ struct MainView: View {
                     }
                     if showResourceLoad, let result {
                         HStack { Label("Загрузка ресурсов",systemImage:"chart.bar.xaxis").font(.caption.bold()); Spacer(); Button("Скрыть",systemImage:"xmark") { showResourceLoad = false } }.padding(.horizontal,10).frame(height:28).background(Color(nsColor:.controlBackgroundColor))
-                        ResourceLoadPanel(plan:w.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
+                        ResourceLoadPanel(plan:w.displayedSnapshot.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
                             .offset(x:canvasScrollX).frame(width:geo.size.width,height:200,alignment:.leading).clipped()
                     }
                     }
@@ -298,7 +334,7 @@ struct MainView: View {
                     Text(field.title).font(.caption.bold()).frame(width:field.width,alignment:.leading)
                 }
             }.frame(width:contentWidth,height:32,alignment:.leading).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
-            TimelineHeader(scale:w.snapshot.timeline(days),dayWidth:dayWidth).frame(width:chartWidth,alignment:.leading)
+            TimelineHeader(scale:w.displayedSnapshot.timeline(days),dayWidth:dayWidth).frame(width:chartWidth,alignment:.leading)
         }.frame(height:TimelineHeader.height).background(Color(nsColor:.controlBackgroundColor))
     }
 }
@@ -655,7 +691,7 @@ struct TaskDateCell: View {
                 next.activities[i].earliestStart = nil
                 if finish { next.activities[i].requestedFinish = value.isEmpty ? nil : value; if value.isEmpty { next.activities[i].lockFinish = false } }
                 else { next.activities[i].requestedStart = value.isEmpty ? nil : value; if value.isEmpty { next.activities[i].lockStart = false } }
-                do { let result = try Planner.calculate(next); w.install(next,calculation:result); w.dirty = true; text = calculated; return nil } catch { return error.localizedDescription }
+                do { try w.accept(next); text = calculated; return nil } catch { return error.localizedDescription }
             }.help("Расчёт: \(calculated). Назначено: \(requested ?? "нет"). Нажмите для выбора в календаре.")
             Toggle(finish ? "Фиксировать окончание \(activity.id)" : "Фиксировать начало \(activity.id)",isOn:Binding(get:{ locked },set:{ value in
                 let date = text.isEmpty ? calculated : text
@@ -697,7 +733,7 @@ struct TaskProperties: View {
                 var next = w.plan
                 guard let i = next.activities.firstIndex(where:{ $0.id == activity.id }) else { error = "Задача удалена"; return }
                 next.activities[i] = draft
-                do { let result = try Planner.calculate(next); w.install(next,calculation:result); w.dirty = true; dismiss() } catch { self.error = error.localizedDescription }
+                do { try w.accept(next); dismiss() } catch { self.error = error.localizedDescription }
             }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width:580)
     }
@@ -722,7 +758,7 @@ struct ResourceLoadPanel: View {
                     ForEach(plan.resources) { resource in
                         let type = plan.resourceTypes.first { $0.id == resource.typeID }
                         let symbol = plan.measurementUnits.first { $0.id == type?.outputUnitID }?.symbol ?? "ед."
-                        let loads = w.snapshot.loads(resource,days:days)
+                        let loads = w.displayedSnapshot.loads(resource,days:days)
                         HStack(spacing:0) {
                             HStack { Text(resource.name).bold(); Text("Доступно: \(resource.capacity.formatted())").foregroundStyle(.secondary); if let p = resource.productivity { Text("Выработка: \(p.formatted()) \(symbol)/\(resource.timeUnit == "hour" ? "ч" : "дн") на единицу").foregroundStyle(.secondary) }; Spacer() }.font(.caption).padding(.leading,10).frame(width:tableWidth)
                             ResourceHeatmap(loads:loads,width:chartWidth,dayWidth:dayWidth,title:resource.name,symbol:symbol,date:{ w.date($0) })

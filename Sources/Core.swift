@@ -94,7 +94,7 @@ enum PlanError: LocalizedError {
     var errorDescription: String? { if case .invalid(let s) = self { return s }; return nil }
 }
 struct Planner {
-    static func calculate(_ plan: Schedule, applyResourceCalendars: Bool = true) throws -> Calculation {
+    static func calculate(_ plan: Schedule, applyResourceCalendars: Bool = true, validationOnly: Bool = false) throws -> Calculation {
         guard plan.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5","0.6"].contains(plan.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
         guard !plan.calendar.weekdays.isEmpty, Set(plan.calendar.weekdays).count == plan.calendar.weekdays.count, plan.calendar.weekdays.allSatisfy({(1...7).contains($0)}), TimeZone(identifier: plan.calendar.timezone) != nil else { throw PlanError.invalid("Неверный рабочий календарь") }
         guard validDate(plan.startDate), plan.calendar.holidays.allSatisfy(validDate) else { throw PlanError.invalid("Дата должна иметь вид ГГГГ-ММ-ДД") }
@@ -158,6 +158,7 @@ struct Planner {
             for l in outgoing[id,default:[]] { indegree[l.to]! -= 1; if indegree[l.to] == 0 { queue.append(l.to) } }
         }
         guard order.count == executableIDs.count else { throw PlanError.invalid("Обнаружен цикл зависимостей. Удалите замыкающую связь.") }
+        if validationOnly { return Calculation(timings:[:],duration:0,conflicts:[],cost:0) }
         if applyResourceCalendars && plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) {
             return try CalendarScheduler.calculate(plan)
         }
@@ -417,7 +418,7 @@ extension Planner {
         }
         return count
     }
-    static func group(_ plan:Schedule,ids:Set<String>,name:String = "Новая суммарная задача") throws -> Schedule {
+    static func group(_ plan:Schedule,ids:Set<String>,name:String = "Новая суммарная задача", deferCalculation:Bool = false) throws -> Schedule {
         let roots = plan.activities.filter { task in ids.contains(task.id) && !plan.activities.contains(where:{ ids.contains($0.id) && $0.id != task.id && plan.descendants(of:$0.id).contains(task.id) }) }
         guard roots.count >= 2 else { throw PlanError.invalid("Выберите минимум две задачи одного уровня") }
         guard roots.allSatisfy({ $0.parent == roots[0].parent }) else { throw PlanError.invalid("Для объединения выберите задачи с одним родителем") }
@@ -425,7 +426,7 @@ extension Planner {
         let indices = roots.compactMap { root in plan.activities.firstIndex { $0.id == root.id } }
         for i in indices { result.activities[i].parent = id }
         result.activities.insert(Activity(id:id,name:name,duration:0,kind:"summary",parent:roots[0].parent),at:indices.min()!)
-        _ = try calculate(result); return result
+        _ = try calculate(result,validationOnly:deferCalculation); return result
     }
 }
 struct ResourceDay {
