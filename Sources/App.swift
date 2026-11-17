@@ -101,15 +101,19 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
 @main struct ArankPlannerApp: App {
     @NSApplicationDelegateAdaptor(Lifecycle.self) var delegate
     @StateObject private var w = Workspace()
+    @Environment(\.openWindow) private var openWindow
     var body: some Scene {
         WindowGroup("Arank Planner") { MainView().environmentObject(w).frame(minWidth:1120,minHeight:720).onAppear { delegate.workspace = w; NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.activate(ignoringOtherApps:true) } }
         .commands {
+            CommandGroup(replacing:.help) { Button("Руководства ARANK Planner") { openWindow(id:"planner-help") }.keyboardShortcut("?",modifiers:.command) }
             CommandGroup(replacing:.newItem) { Button("Новый проект") { if w.canReplace() { w.install(Schedule(name:"Новый проект",activities:[],links:[],resources:[]),calculation:Calculation(timings:[:],duration:0,conflicts:[],cost:0)); w.url = nil; w.selection = nil; w.selectedIDs = []; w.dirty = false } }.keyboardShortcut("n"); Button("Открыть…") { w.open() }.keyboardShortcut("o") }
             CommandGroup(replacing:.saveItem) { Button("Сохранить") { _ = w.save() }.keyboardShortcut("s"); Button("Сохранить как…") { _ = w.save(asNew:true) }.keyboardShortcut("s",modifiers:[.command,.shift]) }
         }
+        Window("Справка ARANK Planner",id:"planner-help") { PlannerHelpView() }.defaultSize(width:1000,height:760)
     }
 }
 struct MainView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var w: Workspace
     @State var tab = "График"
     @State var properties: Activity?
@@ -196,6 +200,7 @@ struct MainView: View {
                         .background(tab == value ? Color.white : Color.clear,in:UnevenRoundedRectangle(topLeadingRadius:6,topTrailingRadius:6))
                 }.buttonStyle(.plain).padding(.top,6).accessibilityAddTraits(tab == value ? .isSelected : [])
             }
+            Button { openWindow(id:"planner-help") } label: { Label("Справка",systemImage:"questionmark.circle") }.buttonStyle(.plain).padding(.horizontal,10).help("Руководства ARANK Planner")
         }.padding(.trailing,12).frame(height:40).background(Color.arankChrome)
             .overlay(alignment:.bottom) { Color.arankBlue.opacity(0.18).frame(height:1) }
     }
