@@ -1,0 +1,41 @@
+name: Planner macOS checks
+on:
+  pull_request:
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Examples/**'
+      - '*.command'
+      - 'Info.plist'
+      - 'WORKSPACE-GUIDE.md'
+      - 'openschedule.schema.json'
+      - '.github/workflows/planner-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build the macOS app
+        run: |
+          ./build.command
+          codesign --verify --deep --strict build/ArankPlanner.app
+          cmp WORKSPACE-GUIDE.md build/ArankPlanner.app/Contents/Resources/WORKSPACE-GUIDE.md
+          cmp Examples/resource-scenarios.osched build/ArankPlanner.app/Contents/Resources/resource-scenarios.osched
+      - name: Run scheduling and workspace filter tests
+        run: ./test.command
+      - name: Run workspace calculation-mode tests
+        run: ./test-calculation-mode.command
+      - name: Package the checked Apple Silicon build
+        run: ditto -c -k --keepParent build/ArankPlanner.app "${RUNNER_TEMP}/ArankPlanner-0.10.7-AppleSilicon.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ARANK-Planner-0.10.7-AppleSilicon
+          path: ${{ runner.temp }}/ArankPlanner-0.10.7-AppleSilicon.zip
+          if-no-files-found: error
+          retention-days: 14

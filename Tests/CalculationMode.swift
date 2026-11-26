@@ -22,6 +22,12 @@ import SwiftUI
   precondition(w.needsCalculation)
   w.setAutomaticCalculation(true)
   precondition(!w.automaticCalculation && w.needsCalculation && !w.error.isEmpty)
+  let demo = Workspace()
+  let exampleURL = URL(fileURLWithPath:"Examples/resource-scenarios.osched")
+  precondition(demo.openScenarioExample(from:exampleURL))
+  precondition(demo.result?.duration == 9 && demo.url == nil && !demo.dirty)
+  precondition(demo.projectGeneration == 1)
+  print("PASS: versioned example opens without a writable destination")
   print("PASS: manual batch edits, cached display, explicit calculation, auto switch, cycles, failed calculation")
  }
 }

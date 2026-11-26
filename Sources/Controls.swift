@@ -224,10 +224,10 @@ struct ResourceHeatmap:View {
 
 
 extension Color {
-    static let arankBlue = Color(red:0.30,green:0.48,blue:0.69)
-    static let arankInk = Color(red:0.24,green:0.34,blue:0.46)
-    static let arankMuted = Color(red:0.48,green:0.55,blue:0.64)
-    static let arankChrome = Color(red:0.88,green:0.92,blue:0.96)
+    static let arankBlue = Color.accentColor
+    static let arankInk = Color.primary
+    static let arankMuted = Color.secondary
+    static let arankChrome = Color(nsColor:.controlBackgroundColor)
 }
 struct RibbonTile:View {
     @Environment(\.isEnabled) private var enabled
@@ -237,18 +237,28 @@ struct RibbonTile:View {
     var disclosure = false
     init(_ title:String,icon:String,active:Bool = false,disclosure:Bool = false) { self.title = title; self.icon = icon; self.active = active; self.disclosure = disclosure }
     var body:some View {
-        VStack(spacing:6) {
-            Image(systemName:icon).font(.system(size:20,weight:.regular)).frame(height:24)
-            Text(title).font(.system(size:10,weight:.medium)).multilineTextAlignment(.center).lineLimit(2).frame(height:26,alignment:.top)
-        }.foregroundStyle(active ? Color.arankBlue : Color.arankMuted)
-            .frame(width:62,height:64).background(active ? Color.arankBlue.opacity(0.08) : Color.clear,in:RoundedRectangle(cornerRadius:5))
+        VStack(spacing:4) {
+            Image(systemName:icon).font(.system(size:17,weight:.medium)).frame(height:20)
+            Text(title).font(.system(size:11,weight:.medium)).multilineTextAlignment(.center).lineLimit(2).frame(height:28,alignment:.top)
+        }.foregroundStyle(active ? Color.arankBlue : Color.arankInk)
+            .frame(width:66,height:58).background(active ? Color.arankBlue.opacity(0.08) : Color.clear,in:RoundedRectangle(cornerRadius:5))
             .overlay(alignment:.topTrailing) { if disclosure { Image(systemName:"chevron.down").font(.system(size:6,weight:.semibold)).foregroundStyle(Color.arankMuted).padding(4) } }
             .opacity(enabled ? 1 : 0.4).contentShape(Rectangle()).accessibilityLabel(title.replacingOccurrences(of:"\n",with:" "))
     }
 }
 struct RibbonButtonStyle:ButtonStyle {
     func makeBody(configuration:Configuration) -> some View {
-        configuration.label.background(configuration.isPressed ? Color.arankBlue.opacity(0.14) : Color.clear,in:RoundedRectangle(cornerRadius:5)).opacity(configuration.isPressed ? 0.8 : 1)
+        RibbonHoverSurface(pressed:configuration.isPressed) { configuration.label }
+    }
+}
+private struct RibbonHoverSurface<Label: View>: View {
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovered = false
+    let pressed: Bool
+    @ViewBuilder let label: () -> Label
+    var body: some View {
+        label().background(Color.arankBlue.opacity(pressed ? 0.17 : hovered && enabled ? 0.10 : 0),in:RoundedRectangle(cornerRadius:6))
+            .onHover { hovered = $0 }
     }
 }
 
