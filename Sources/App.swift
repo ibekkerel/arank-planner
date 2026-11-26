@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
     @Published var url: URL?
     @Published var dirty = false
     @Published var pendingMove: MoveProposal?
+    @Published private(set) var projectGeneration = 0
     @Published private(set) var automaticCalculation = true
     @Published private(set) var needsCalculation = false
     private var previousAnalysis:ScheduleAnalysis?
@@ -63,7 +64,12 @@ import UniformTypeIdentifiers
         guard canReplace() else { return }
         let p = NSOpenPanel(); p.allowedContentTypes = [UTType(filenameExtension:"osched") ?? .json,.json]
         guard p.runModal() == .OK, let u = p.url else { return }
-        do { plan = try Planner.load(u); previousAnalysis = nil; needsCalculation = false; url = u; dirty = false; selection = plan.activities.first?.id; selectedIDs = [] } catch { self.error = error.localizedDescription }
+        do { plan = try Planner.load(u); previousAnalysis = nil; needsCalculation = false; url = u; dirty = false; selection = plan.activities.first?.id; selectedIDs = []; projectGeneration += 1 } catch { self.error = error.localizedDescription }
+    }
+    func newProject() {
+        guard canReplace() else { return }
+        install(Schedule(name:"Новый проект",activities:[],links:[],resources:[]),calculation:Calculation(timings:[:],duration:0,conflicts:[],cost:0))
+        url = nil; selection = nil; selectedIDs = []; dirty = false; projectGeneration += 1
     }
     func select(_ id:String,order:[String]) {
         let modifiers = NSEvent.modifierFlags
@@ -75,8 +81,26 @@ import UniformTypeIdentifiers
     func delete(_ id:String) {
         let roots = selectedIDs.contains(id) ? selectedIDs : [id]
         var ids = Set<String>(); for root in roots { ids.formUnion(plan.descendants(of:root)) }
-        change { p in p.activities.removeAll { ids.contains($0.id) }; p.links.removeAll { ids.contains($0.from) || ids.contains($0.to) }; for key in ids { p.baseline.removeValue(forKey:key) } }
-        selectedIDs.subtract(ids); if let current = selection, ids.contains(current) { selection = nil }
+        guard !ids.isEmpty else { return }
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = "Удалить строки графика?"
+        let nested = ids.subtracting(roots).count
+        confirm.informativeText = nested > 0
+            ? "Будет удалено строк: \(ids.count), из них вложенных: \(nested), включая строки, скрытые фильтром или свёрнутой группой. Связи и базовые даты этих работ тоже будут удалены."
+            : "Будет удалено строк: \(ids.count). Связи и базовые даты этих работ тоже будут удалены."
+        confirm.addButton(withTitle:"Отмена").keyEquivalent = "\r"
+        confirm.addButton(withTitle:"Удалить").keyEquivalent = ""
+        guard confirm.runModal() == .alertSecondButtonReturn else { return }
+        var next = plan
+        next.activities.removeAll { ids.contains($0.id) }
+        next.links.removeAll { ids.contains($0.from) || ids.contains($0.to) }
+        for key in ids { next.baseline.removeValue(forKey:key) }
+        do {
+            try accept(next)
+            selectedIDs.subtract(ids)
+            if let current = selection, ids.contains(current) { selection = nil }
+        } catch { self.error = error.localizedDescription }
     }
     func groupSelection() {
         do { let oldIDs = Set(plan.activities.map(\.id)); try accept(Planner.group(plan,ids:selectedIDs,deferCalculation:!automaticCalculation)); selection = plan.activities.first { !oldIDs.contains($0.id) }?.id; selectedIDs = Set(selection.map { [$0] } ?? []) }
@@ -104,7 +128,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     var body: some Scene {
         WindowGroup("Arank Planner") { MainView().environmentObject(w).frame(minWidth:1120,minHeight:720).onAppear { delegate.workspace = w; NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.activate(ignoringOtherApps:true) } }
         .commands {
-            CommandGroup(replacing:.newItem) { Button("Новый проект") { if w.canReplace() { w.install(Schedule(name:"Новый проект",activities:[],links:[],resources:[]),calculation:Calculation(timings:[:],duration:0,conflicts:[],cost:0)); w.url = nil; w.selection = nil; w.selectedIDs = []; w.dirty = false } }.keyboardShortcut("n"); Button("Открыть…") { w.open() }.keyboardShortcut("o") }
+            CommandGroup(replacing:.newItem) { Button("Новый проект") { w.newProject() }.keyboardShortcut("n"); Button("Открыть…") { w.open() }.keyboardShortcut("o") }
             CommandGroup(replacing:.saveItem) { Button("Сохранить") { _ = w.save() }.keyboardShortcut("s"); Button("Сохранить как…") { _ = w.save(asNew:true) }.keyboardShortcut("s",modifiers:[.command,.shift]) }
         }
     }
@@ -113,9 +137,15 @@ struct MainView: View {
     @EnvironmentObject var w: Workspace
     @State var tab = "График"
     @State var properties: Activity?
-    @State var showResourceLoad = true
+    @State var showResourceLoad = false
     @State var showLinks = false
-    @State var showMetrics = false
+    @State var showMetrics = true
+    @State private var showInspector = false
+    @State private var showResourceScenarios = false
+    @State private var scrollToRow: String?
+    @State private var search = ""
+    @State private var filter: WorkFilter = .all
+    @FocusState private var searchFocused: Bool
     @State var fit = true
     @AppStorage("planner.zoom") var zoom = 24.0
     @State var showScaleSettings = false
@@ -134,70 +164,143 @@ struct MainView: View {
         visibleColumnIDs = ids.sorted().joined(separator:","); columnOffset = 0
     }
 
-    var rows: [(activity:Activity,depth:Int)] {
-        var hiddenDepth:Int?
-        return w.snapshot.orderedActivities.filter { entry in
-            if let depth = hiddenDepth, entry.depth > depth { return false }
-            hiddenDepth = collapsed.contains(entry.activity.id) ? entry.depth : nil
-            return true
-        }
+    private var terms: [String] { WorkFilter.terms(search) }
+    private var isFiltering: Bool { filter != .all || !terms.isEmpty }
+    private func visibleActivities(_ result: Calculation?) -> [WorkspaceActivityRow] {
+        filter.rows(w.snapshot.orderedActivities,terms:terms,collapsed:collapsed,timings:w.needsCalculation ? [:] : (result?.timings ?? [:]))
+    }
+    private func resetFilters() { search = ""; filter = .all }
+    private func clearSelectionOutside(_ rows: [WorkspaceActivityRow]) {
+        let ids = Set(rows.map(\.activity.id))
+        let selectable = Set(rows.lazy.filter { !$0.contextOnly }.map(\.activity.id))
+        let remaining = w.selectedIDs.intersection(selectable)
+        if remaining != w.selectedIDs { w.selectedIDs = remaining }
+        if let selected = w.selection, !ids.contains(selected) { w.selection = nil }
     }
     var body: some View {
         VStack(spacing:0) {
             projectTabs
             if tab == "График" {
                 plannerRibbon
-                HStack(spacing:6) {
-                    Image(systemName:w.needsCalculation ? "exclamationmark.circle.fill" : "checkmark.circle")
-                    Text(w.needsCalculation ? "Требуется пересчёт — даты и загрузка показаны по предыдущему расчёту" : "Расчёт актуален")
-                        .lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength:0)
-                }.font(.caption).foregroundStyle(w.needsCalculation ? Color.orange : Color.secondary)
-                    .padding(.horizontal,16).frame(height:24)
-                if showMetrics, let r = w.result {
-                    HStack { Metric(title:"ДЛИТЕЛЬНОСТЬ",value:"\(r.duration) раб. дн."); Metric(title:"ЗАТРАТЫ",value:"\(r.cost.formatted(.number.precision(.fractionLength(0)))) \(w.plan.currency)"); Metric(title:"ПЕРЕГРУЗКИ",value:"\(r.conflicts.count)") }.padding(10)
-                }
+                workspaceStatus
                 Divider()
-                GeometryReader { geo in graphViewport(geo) }.frame(maxWidth:.infinity,maxHeight:.infinity)
+                let result = w.result
+                let rows = visibleActivities(result)
+                workBar(rows)
+                Divider()
+                HStack(spacing:0) {
+                    GeometryReader { geo in graphViewport(geo, result:result, visibleRows:rows) }
+                        .frame(maxWidth:.infinity,maxHeight:.infinity)
+                    if showInspector {
+                        Divider()
+                        ActivityInspector(activity:w.plan.activities.first { $0.id == w.selection }, close:{ showInspector = false })
+                            .frame(width:252)
+                    }
+                }.frame(maxHeight:.infinity)
                 if showLinks { Divider(); LinksPanel().frame(height:200).padding(.horizontal,16).padding(.vertical,8) }
                 Divider()
-                HStack { Text("\(w.plan.activities.filter { $0.entityType == "task" }.count) задач · \(w.plan.activities.filter { $0.entityType == "milestone" }.count) вех · \(w.plan.activities.filter { $0.entityType == "summary" }.count) суммарных · \(w.plan.resources.count) ресурсов"); Spacer(); Text("Связь: потяните кружок на краю полосы к другой задаче · Enter — применить") }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,16).padding(.vertical,6)
+                HStack(spacing:12) {
+                    Text("\(rows.count) из \(w.plan.activities.count) строк")
+                    if !w.selectedIDs.isEmpty { Text("Выбрано: \(w.selectedIDs.count)") }
+                    Spacer()
+                    Text("⌘F  Поиск · ⇧/⌘  Выбор нескольких строк").lineLimit(1)
+                }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,16).frame(height:28)
+                .onChange(of:rows.map { $0.contextOnly ? nil : $0.activity.id }) { _,_ in clearSelectionOutside(rows) }
             } else {
                 ScrollView { if tab == "Ресурсы" { ResourceView() } else if tab == "Справочники" { CatalogView() } else { SettingsView() } }.padding(20).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
             }
         }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
-        .background { TaskKeyboardHandler(enabled:tab == "График" && !w.selectedIDs.isEmpty) { if let id = w.selectedIDs.first { w.delete(id) } } }
-        .onChange(of:w.selectedIDs) { _,ids in if !ids.isEmpty { NSApplication.shared.keyWindow?.makeFirstResponder(nil) } }
+        .background { TaskKeyboardHandler(enabled:tab == "График" && !w.selectedIDs.isEmpty && !searchFocused) { if let id = w.selectedIDs.sorted().first { w.delete(id) } } }
+        .onChange(of:w.projectGeneration) { _,_ in resetFilters(); collapsed.removeAll(); columnOffset = 0; canvasScrollX = 0; showLinks = false; tab = "График" }
         .alert("Не удалось выполнить действие",isPresented:Binding(get:{ !w.error.isEmpty },set:{ if !$0 { w.error = "" } })) { Button("OK") { w.error = "" } } message: { Text(w.error) }
+        .sheet(isPresented:$showResourceScenarios) { ResourceScenarioSheet(workspace:w) }
         .sheet(item:$w.pendingMove) { proposal in MoveConfirmation(proposal:proposal) }
         .sheet(item:$properties) { activity in TaskProperties(activity:activity) }
         .sheet(item:$w.propertyActivity) { activity in TaskProperties(activity:activity) }
     }
+    private var workspaceStatus: some View {
+        HStack(spacing:14) {
+            if w.needsCalculation {
+                Label("Нужен пересчёт",systemImage:"clock.badge.exclamationmark").foregroundStyle(Color.orange)
+                    .help("Показаны даты предыдущего расчёта; фильтр критических работ недоступен до пересчёта.")
+                Button("Пересчитать") { _ = w.recalculate() }.controlSize(.small)
+            } else if w.result != nil {
+                Label(w.automaticCalculation ? "График актуален" : "График актуален · вручную",systemImage:"checkmark.circle").foregroundStyle(Color.secondary)
+            } else {
+                Label("Расчёт недоступен",systemImage:"exclamationmark.circle").foregroundStyle(Color.orange)
+                Button("Повторить расчёт") { _ = w.recalculate() }.controlSize(.small)
+            }
+            Spacer(minLength:6)
+            let displayedStrategy = Planner.activeResourceStrategy(w.displayedSnapshot.plan)
+            if displayedStrategy != .standard {
+                Label("Другой порядок работ",systemImage:"arrow.triangle.branch").help(displayedStrategy.title)
+            }
+            if showMetrics, let r = w.result {
+                Text("\(r.duration) раб. дн.").help(w.needsCalculation ? "Длительность предыдущего расчёта" : "Длительность проекта")
+                Text(r.cost.formatted(.number.precision(.fractionLength(0)))+" "+w.plan.currency).help("Расчётные затраты")
+                Label("Перегрузки: \(r.conflicts.count)",systemImage:r.conflicts.isEmpty ? "checkmark.shield" : "exclamationmark.triangle")
+                    .foregroundStyle(r.conflicts.isEmpty ? Color.secondary : Color.orange)
+            }
+        }.font(.caption).lineLimit(1).padding(.horizontal,16).frame(height:30)
+            .background(Color(nsColor:.controlBackgroundColor))
+    }
+    private func workBar(_ rows: [WorkspaceActivityRow]) -> some View {
+        HStack(spacing:10) {
+            HStack(spacing:6) {
+                Button { searchFocused = true } label: { Image(systemName:"magnifyingglass").foregroundStyle(Color.secondary) }
+                    .buttonStyle(.plain).keyboardShortcut("f",modifiers:.command).accessibilityLabel("Найти работу (⌘F)")
+                TextField("Найти работу по названию или коду",text:$search).textFieldStyle(.plain)
+                    .focused($searchFocused).accessibilityLabel("Поиск работы по названию или коду")
+                    .onSubmit { if let first = rows.first(where:{ !$0.contextOnly })?.activity.id { w.selection = first; w.selectedIDs = [first]; searchFocused = false; showInspector = true; scrollToRow = first } }
+                if !search.isEmpty {
+                    Button { search = ""; searchFocused = true } label: { Image(systemName:"xmark.circle.fill").foregroundStyle(Color.secondary) }
+                        .buttonStyle(.plain).accessibilityLabel("Очистить поиск")
+                }
+            }.padding(.horizontal,9).frame(width:286,height:27).background(Color(nsColor:.controlBackgroundColor),in:RoundedRectangle(cornerRadius:7))
+                .overlay { RoundedRectangle(cornerRadius:7).strokeBorder(searchFocused ? Color.accentColor : Color.secondary.opacity(0.23),lineWidth:1) }
+            Menu {
+                ForEach(WorkFilter.allCases) { item in
+                    Button { filter = item } label: { if item == filter { Label(item.title,systemImage:"checkmark") } else { Text(item.title) } }
+                        .disabled(item == .critical && (w.needsCalculation || w.result == nil))
+                }
+            } label: { Label(filter.title,systemImage:"line.3.horizontal.decrease.circle").lineLimit(1) }
+            .fixedSize().help("Критические: работы с нулевым или отрицательным полным резервом по текущему расчёту")
+            if isFiltering {
+                Text(filter == .critical && w.needsCalculation ? "Пересчитайте график" : "Найдено: \(rows.lazy.filter { !$0.contextOnly }.count)")
+                    .foregroundStyle(.secondary).lineLimit(1)
+                Button("Сбросить") { resetFilters() }
+            }
+            Spacer(minLength:8)
+            Button { showLinks.toggle(); if showLinks { showResourceLoad = false } } label: { Label("Связи",systemImage:"arrow.triangle.branch") }
+                .help(showLinks ? "Скрыть связи задач" : "Показать связи задач").accessibilityAddTraits(showLinks ? .isSelected : [])
+            Button { showInspector.toggle() } label: {
+                Label("Детали",systemImage:"sidebar.right")
+            }.help(showInspector ? "Скрыть детали работы" : "Показать детали работы").accessibilityAddTraits(showInspector ? .isSelected : [])
+        }.font(.callout).controlSize(.small).padding(.horizontal,16).frame(height:42)
+    }
     private var projectTabs:some View {
         HStack(spacing:0) {
-            HStack(spacing:8) {
-                Image(systemName:"diamond.inset.filled").font(.system(size:20,weight:.light)).foregroundStyle(Color.arankBlue)
-                Text("ARANK").font(.system(size:13,weight:.bold,design:.rounded)).tracking(2).foregroundStyle(Color.arankInk)
-            }.frame(width:116)
-            HStack(spacing:8) {
-                Image(systemName:"chart.bar.xaxis").foregroundStyle(Color.arankBlue)
-                Text(w.plan.name + (w.dirty ? " •" : "")).font(.system(size:12,weight:.semibold)).lineLimit(1)
-            }.padding(.horizontal,14).frame(maxWidth:360,minHeight:34,alignment:.leading)
-                .background(Color.white,in:UnevenRoundedRectangle(topLeadingRadius:7,topTrailingRadius:7))
-                .overlay(alignment:.top) { RoundedRectangle(cornerRadius:1).fill(Color.arankBlue).frame(height:2).padding(.horizontal,8) }
-                .padding(.top,6)
-            Spacer(minLength:12)
+            HStack(spacing:7) {
+                Image(systemName:"diamond.inset.filled").font(.system(size:19,weight:.medium)).foregroundStyle(Color.arankBlue).accessibilityHidden(true)
+                VStack(alignment:.leading,spacing:1) {
+                    Text(w.plan.name).font(.callout.weight(.semibold)).lineLimit(1)
+                    Text(w.dirty ? "Есть несохранённые изменения" : w.url?.lastPathComponent ?? "Локальный проект").font(.caption2)
+                        .foregroundStyle(w.dirty ? Color.orange : Color.secondary).lineLimit(1)
+                }
+            }.frame(maxWidth:340,alignment:.leading).help(w.url?.path ?? w.plan.name)
+            Spacer(minLength:16)
             ForEach(["График","Ресурсы","Справочники","Проект"],id:\.self) { title in
                 let value = title == "Проект" ? "Параметры" : title
+                let icon = ["График":"chart.bar.xaxis","Ресурсы":"person.2","Справочники":"books.vertical","Проект":"gearshape"][title] ?? "folder"
                 Button { tab = value } label: {
-                    Text(title).font(.system(size:12,weight:tab == value ? .semibold : .medium))
-                        .foregroundStyle(tab == value ? Color.arankInk : Color.arankMuted)
-                        .frame(width:title == "Справочники" ? 112 : 84,height:34)
-                        .background(tab == value ? Color.white : Color.clear,in:UnevenRoundedRectangle(topLeadingRadius:6,topTrailingRadius:6))
-                }.buttonStyle(.plain).padding(.top,6).accessibilityAddTraits(tab == value ? .isSelected : [])
+                    Label(title,systemImage:icon).font(.callout.weight(tab == value ? .semibold : .medium))
+                        .foregroundStyle(tab == value ? Color.primary : Color.secondary)
+                        .padding(.horizontal,11).frame(height:31)
+                        .background(tab == value ? Color.arankBlue.opacity(0.17) : Color.clear,in:RoundedRectangle(cornerRadius:7))
+                }.buttonStyle(.plain).accessibilityAddTraits(tab == value ? .isSelected : [])
             }
-        }.padding(.trailing,12).frame(height:40).background(Color.arankChrome)
-            .overlay(alignment:.bottom) { Color.arankBlue.opacity(0.18).frame(height:1) }
+        }.padding(.horizontal,16).frame(height:52).background(Color.arankChrome)
+            .overlay(alignment:.bottom) { Divider() }
     }
     private var plannerRibbon:some View {
         HStack(spacing:4) {
@@ -212,18 +315,19 @@ struct MainView: View {
             Button { if let a = w.plan.activities.first(where:{ $0.id == w.selection }) { w.propertyActivity = a } } label: { RibbonTile("Свойства\nзадачи",icon:"doc.text") }.disabled(w.selection == nil)
             Button { w.groupSelection() } label: { RibbonTile("Суммарная\nзадача",icon:"square.stack.3d.up") }.disabled(w.selectedIDs.count < 2).help("Объединить выбранные задачи в суммарную")
             ribbonDivider
-            VStack(spacing:7) {
+            VStack(spacing:5) {
                 Picker("Режим расчёта",selection:Binding(get:{ w.automaticCalculation },set:{ w.setAutomaticCalculation($0) })) {
                     Text("Авто").tag(true); Text("Вручную").tag(false)
-                }.pickerStyle(.segmented).labelsHidden().frame(width:142).controlSize(.small)
+                }.pickerStyle(.segmented).labelsHidden().frame(width:128).controlSize(.small)
                 Text("Режим расчёта").font(.system(size:10,weight:.medium)).foregroundStyle(Color.arankMuted)
-            }.frame(width:150,height:64)
+            }.frame(width:134,height:58)
             Button { _ = w.recalculate() } label: { RibbonTile("Расчёт\nграфика",icon:"arrow.clockwise",active:w.needsCalculation) }.disabled(w.automaticCalculation && !w.needsCalculation)
             RibbonMenu {
                 Toggle("Учитывать ресурсы",isOn:Binding(get:{ w.plan.levelResources ?? true },set:{ enabled in w.change { $0.levelResources = enabled } }))
                 Button("Сохранить базовый план") { w.baseline() }
             } label: { RibbonTile("Параметры\nрасчёта",icon:"slider.horizontal.3",disclosure:true) }
-            Button { showLinks.toggle() } label: { RibbonTile("Связи\nзадач",icon:"arrow.triangle.branch",active:showLinks) }
+            Button { showResourceScenarios = true } label: { RibbonTile("Сравнить\nварианты",icon:"arrow.triangle.branch") }
+                .disabled(w.plan.activities.isEmpty).help("Сравнить стратегии распределения ресурсов, не меняя проект")
             ribbonDivider
             RibbonMenu {
                                 Button("Раскрыть всё") { collapsed.removeAll() }
@@ -247,7 +351,7 @@ struct MainView: View {
                                 Button("Все поля") { visibleColumnIDs = ScheduleColumn.all.map(\.id).joined(separator:","); columnOffset = 0 }
 
             } label: { RibbonTile("Поля\nтаблицы",icon:"tablecells",disclosure:true) }
-            Button { showResourceLoad.toggle() } label: { RibbonTile("Загрузка\nресурсов",icon:"chart.bar",active:showResourceLoad) }
+            Button { showResourceLoad.toggle(); if showResourceLoad { showLinks = false } } label: { RibbonTile("Загрузка\nресурсов",icon:"chart.bar",active:showResourceLoad) }
             Button { showScaleSettings.toggle() } label: { RibbonTile("Масштаб\nи таблица",icon:"arrow.up.left.and.arrow.down.right") }
                 .popover(isPresented:$showScaleSettings) {
                     VStack(spacing:0) {
@@ -256,46 +360,57 @@ struct MainView: View {
                         VStack(alignment:.leading,spacing:8) {
                             Text("Ширина таблицы").font(.headline)
                             Slider(value:$preferredTableWidth,in:300...900).accessibilityLabel("Ширина табличной части")
+                            Toggle("Показатели проекта",isOn:$showMetrics)
+                            Button("На весь экран") { showScaleSettings = false; NSApplication.shared.keyWindow?.toggleFullScreen(nil) }
                         }.padding(20).frame(width:350)
                     }
                 }
-            RibbonMenu {
-                Toggle("Показатели проекта",isOn:$showMetrics)
-                Button("На весь экран") { NSApplication.shared.keyWindow?.toggleFullScreen(nil) }
-            } label: { RibbonTile("Ещё",icon:"ellipsis",disclosure:true) }
             Spacer(minLength:0)
         }.buttonStyle(RibbonButtonStyle()).menuStyle(.borderlessButton).menuIndicator(.hidden)
-            .padding(.horizontal,10).frame(maxWidth:.infinity).frame(height:82).background(Color.white)
+            .padding(.horizontal,10).frame(maxWidth:.infinity).frame(height:68).background(Color(nsColor:.windowBackgroundColor))
             .overlay(alignment:.bottom) { Color.arankBlue.opacity(0.15).frame(height:1) }
     }
     private var ribbonDivider:some View { Rectangle().fill(Color.arankBlue.opacity(0.16)).frame(width:1,height:48).padding(.horizontal,5) }
     func add(_ kind: String) {
+        resetFilters()
         let numbers = Set(w.plan.activities.map(\.id)); var n = w.plan.activities.count+1
         while numbers.contains("T\(n)") { n += 1 }
         let id = "T\(n)"
         let selected = w.plan.activities.first { $0.id == w.selection }
         let parent = selected?.entityType == "summary" ? selected?.id : selected?.parent
-        w.change { $0.activities.append(Activity(id:id,name:"Новая \(kind == "milestone" ? "веха" : kind == "summary" ? "суммарная задача" : "задача")",duration:kind == "task" ? 1 : 0,kind:kind,parent:parent)) }
-        w.selection = id
+        var next = w.plan
+        let title = kind == "milestone" ? "Новая веха" : kind == "summary" ? "Новая суммарная задача" : "Новая задача"
+        next.activities.append(Activity(id:id,name:title,duration:kind == "task" ? 1 : 0,kind:kind,parent:parent))
+        do {
+            try w.accept(next)
+            if let parent { collapsed.remove(parent) }
+            w.selection = id; w.selectedIDs = [id]; scrollToRow = id
+        } catch { w.error = error.localizedDescription }
     }
-    func ribbonGroup<Content:View>(_ title:String,@ViewBuilder content:()->Content) -> some View {
-        VStack(alignment:.leading,spacing:8) { HStack(spacing:8,content:content).frame(height:28); Text(title).font(.caption2).foregroundStyle(.secondary) }
-    }
-    @ViewBuilder func graphViewport(_ geo:GeometryProxy) -> some View {
-                    let result = w.result
-                    let visibleRows = rows
+    @ViewBuilder private func graphViewport(_ geo:GeometryProxy, result:Calculation?, visibleRows:[WorkspaceActivityRow]) -> some View {
+                    let rowIDs = visibleRows.filter { !$0.contextOnly }.map(\.activity.id)
                     let days = max(10,(result?.duration ?? 0) + 3)
                     let tableWidth = min(CGFloat(preferredTableWidth),geo.size.width * 0.65)
                     let dayWidth = fit ? max(0.25,(geo.size.width-tableWidth)/CGFloat(days)) : zoom
                     let chartWidth = max(geo.size.width-tableWidth,CGFloat(days)*dayWidth)
                     VStack(spacing:0) {
+                    ScrollViewReader { reader in
                     ScrollView([.horizontal,.vertical]) {
                         LazyVStack(alignment:.leading,spacing:0) {
                             header(days:days,dayWidth:dayWidth,chartWidth:chartWidth,tableWidth:tableWidth)
                             ForEach(visibleRows,id:\.activity.id) { row in
-                                scheduleRow(row,result:result,visibleRows:visibleRows,tableWidth:tableWidth,chartWidth:chartWidth,dayWidth:dayWidth)
+                                scheduleRow(row,result:result,visibleRows:visibleRows,rowIDs:rowIDs,tableWidth:tableWidth,chartWidth:chartWidth,dayWidth:dayWidth)
+                                    .id(row.activity.id)
                             }
-                            Button { add("task") } label: { HStack { Image(systemName:"plus"); Text("Новая задача — введите название в строке таблицы"); Spacer() }.padding(.horizontal,16).frame(height:38) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                            if visibleRows.isEmpty && isFiltering {
+                                HStack {
+                                    Label(filter == .critical && w.needsCalculation ? "Для фильтра критических работ нужен актуальный расчёт" : "Нет работ по этому запросу",systemImage:"magnifyingglass")
+                                    Button("Сбросить фильтры") { resetFilters() }
+                                }
+                                    .padding(.horizontal,16).frame(height:38).foregroundStyle(.secondary)
+                            } else if !isFiltering {
+                                Button { add("task") } label: { HStack { Image(systemName:"plus"); Text("Добавить задачу"); Spacer() }.padding(.horizontal,16).frame(height:38) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                            }
                             // Fill the remaining viewport with the same grid instead of centering its contents.
                             ZStack(alignment:.topLeading) {
                                 Color(nsColor:.textBackgroundColor)
@@ -326,6 +441,12 @@ struct MainView: View {
                             HStack { Text("Поля таблицы").font(.caption); Slider(value:$columnOffset,in:0...max(1,contentWidth-tableWidth)).accessibilityLabel("Прокрутка полей таблицы") }.padding(.horizontal,8).frame(width:tableWidth,height:25).background(Color(nsColor:.controlBackgroundColor)).frame(maxWidth:.infinity,alignment:.leading)
                         }
                     }
+                    .onChange(of:scrollToRow) { _, id in
+                        guard let id else { return }
+                        reader.scrollTo(id,anchor:.topLeading)
+                        scrollToRow = nil
+                    }
+                    }
                     if showResourceLoad, let result {
                         HStack { Label("Загрузка ресурсов",systemImage:"chart.bar.xaxis").font(.caption.bold()); Spacer(); Button("Скрыть",systemImage:"xmark") { showResourceLoad = false } }.padding(.horizontal,10).frame(height:28).background(Color(nsColor:.controlBackgroundColor))
                         ResourceLoadPanel(plan:w.displayedSnapshot.plan,result:result,tableWidth:tableWidth,dayWidth:dayWidth,chartWidth:chartWidth,days:days)
@@ -333,10 +454,10 @@ struct MainView: View {
                     }
                     }
     }
-    func scheduleRow(_ row:(activity:Activity,depth:Int),result:Calculation?,visibleRows:[(activity:Activity,depth:Int)],tableWidth:CGFloat,chartWidth:CGFloat,dayWidth:CGFloat) -> some View {
+    private func scheduleRow(_ row:WorkspaceActivityRow,result:Calculation?,visibleRows:[WorkspaceActivityRow],rowIDs:[String],tableWidth:CGFloat,chartWidth:CGFloat,dayWidth:CGFloat) -> some View {
         VStack(spacing:0) {
         HStack(spacing:0) {
-            TaskTableRow(activity:row.activity,depth:row.depth,visibleColumns:visibleColumns,collapsed:collapsed.contains(row.activity.id),toggleCollapse:{ if collapsed.contains(row.activity.id) { collapsed.remove(row.activity.id) } else { collapsed.insert(row.activity.id) } }).frame(width:contentWidth).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
+            TaskTableRow(activity:row.activity,depth:row.depth,visibleColumns:visibleColumns,collapsed:collapsed.contains(row.activity.id),canCollapse:!isFiltering,contextOnly:row.contextOnly,toggleCollapse:{ if collapsed.contains(row.activity.id) { collapsed.remove(row.activity.id) } else { collapsed.insert(row.activity.id) } }).frame(width:contentWidth).offset(x:-min(columnOffset,max(0,contentWidth-tableWidth))).frame(width:tableWidth,alignment:.leading).clipped()
             GanttRow(activity:row.activity,timing:result?.timings[row.activity.id],baseline:w.plan.baseline[row.activity.id],width:chartWidth,dayWidth:dayWidth,onDrag:{ finish,value in
                 connectionDrag = ConnectionDrag(source:ConnectionEndpoint(activityID:row.activity.id,finish:finish),start:value.startLocation,point:value.location)
             },onDrop:{ finish,value in
@@ -352,14 +473,25 @@ struct MainView: View {
                 guard !w.plan.links.contains(where:{ $0.from == link.from && $0.to == link.to && $0.type == link.type && $0.lag == link.lag }) else { return }
                 w.change { $0.links.append(link) }
             },onMove:{ start in w.move(row.activity.id,to:start) })
-        }.frame(height:38).background(w.selectedIDs.contains(row.activity.id) || w.selection == row.activity.id ? Color.teal.opacity(0.10) : Color(nsColor:.textBackgroundColor)).contentShape(Rectangle()).onTapGesture { w.select(row.activity.id,order:visibleRows.map { $0.activity.id }) }
-        .background { NativeTaskMenu(properties:{ properties = row.activity },select:{ w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id },delete:{ w.delete(row.activity.id) },group:w.selectedIDs.count > 1 ? { w.groupSelection() } : nil).frame(maxWidth:.infinity,maxHeight:.infinity) }
+            .allowsHitTesting(!row.contextOnly)
+        }.frame(height:38).background(w.selectedIDs.contains(row.activity.id) || w.selection == row.activity.id ? Color.teal.opacity(0.10) : Color(nsColor:.textBackgroundColor)).contentShape(Rectangle()).onTapGesture {
+            searchFocused = false
+            if row.contextOnly { w.selection = row.activity.id; w.selectedIDs = [] }
+            else { w.select(row.activity.id,order:rowIDs) }
+        }
+        .background {
+            if !row.contextOnly {
+                NativeTaskMenu(properties:{ properties = row.activity },select:{ w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id },delete:{ w.delete(row.activity.id) },group:w.selectedIDs.count > 1 ? { w.groupSelection() } : nil).frame(maxWidth:.infinity,maxHeight:.infinity)
+            }
+        }
         .contextMenu {
             Button("Свойства…") { properties = row.activity }
-            Button("Выбрать задачу") { w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id }
-            if w.selectedIDs.count > 1 { Button("Объединить выбранные в суммарную") { w.groupSelection() } }
-            Divider()
-            Button(w.selectedIDs.contains(row.activity.id) && w.selectedIDs.count > 1 ? "Удалить выбранные задачи" : "Удалить",role:.destructive) { w.delete(row.activity.id) }
+            if !row.contextOnly {
+                Button("Выбрать задачу") { w.selectedIDs.insert(row.activity.id); w.selection = row.activity.id }
+                if w.selectedIDs.count > 1 { Button("Объединить выбранные в суммарную") { w.groupSelection() } }
+                Divider()
+                Button(w.selectedIDs.contains(row.activity.id) && w.selectedIDs.count > 1 ? "Удалить выбранные задачи" : "Удалить",role:.destructive) { w.delete(row.activity.id) }
+            }
         }
         Divider()
         }.frame(height:39)
@@ -375,13 +507,74 @@ struct MainView: View {
         }.frame(height:TimelineHeader.height).background(Color(nsColor:.controlBackgroundColor))
     }
 }
-struct Metric: View { let title:String; let value:String; var body: some View { HStack { Text(title).font(.caption).foregroundStyle(.secondary); Text(value).bold() }.frame(maxWidth:.infinity,alignment:.leading) } }
+private struct ActivityInspector: View {
+    @EnvironmentObject private var w: Workspace
+    let activity: Activity?
+    let close: () -> Void
+    var body: some View {
+        VStack(alignment:.leading,spacing:0) {
+            HStack {
+                Label("Детали работы",systemImage:"sidebar.right").font(.callout.bold())
+                Spacer()
+                Button(action:close) { Image(systemName:"xmark").foregroundStyle(Color.secondary) }
+                    .buttonStyle(.plain).accessibilityLabel("Скрыть детали работы")
+            }.padding(12)
+            Divider()
+            if let activity {
+                ScrollView {
+                    VStack(alignment:.leading,spacing:12) {
+                        Label(activity.id+" · "+EntityKind.title(activity.entityType),systemImage:EntityKind.icon(activity.entityType))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(activity.name).font(.title3.weight(.semibold)).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
+                        if activity.entityType == "task" {
+                            ProgressView(value:activity.progress,total:100) { Text("Выполнено: \(activity.progress.formatted())%").font(.caption) }
+                        }
+                        if let t = w.result?.timings[activity.id] {
+                            Divider()
+                            Text(w.needsCalculation ? "Предыдущий расчёт" : "По расчёту").font(.caption.bold()).foregroundStyle(.secondary)
+                            fact("Начало",w.date(t.start))
+                            fact("Окончание",w.date(t.finish > t.start ? t.finish-1 : t.finish))
+                            fact("Длительность","\(t.finish - t.start) раб. дн.")
+                            if activity.entityType != "summary" { fact("Полный резерв","\(t.float) раб. дн.") }
+                        }
+                        if let baseline = w.plan.baseline[activity.id], let t = w.result?.timings[activity.id], !w.needsCalculation {
+                            let delta = t.finish - baseline.finish
+                            fact("К базовому финишу", delta == 0 ? "Без изменений" : "\(delta > 0 ? "+" : "")\(delta) раб. дн.")
+                        }
+                        Divider()
+                        fact("Предшественники",String(w.plan.links.lazy.filter { $0.to == activity.id }.count))
+                        fact("Последователи",String(w.plan.links.lazy.filter { $0.from == activity.id }.count))
+                        if activity.entityType == "task" {
+                            fact("Ресурс",w.plan.resources.first { $0.id == activity.resource }?.name ?? "Не назначен")
+                        }
+                        Button("Изменить свойства…",systemImage:"pencil") { w.propertyActivity = activity }.buttonStyle(.borderedProminent)
+                    }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
+                }
+            } else {
+                VStack(alignment:.leading,spacing:6) {
+                    Text("Выберите строку в графике").font(.callout.bold())
+                    Text("Здесь появятся даты, резерв, прогресс и связи работы.").font(.caption).foregroundStyle(.secondary)
+                }.padding(12)
+                Spacer()
+            }
+        }.frame(maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:.controlBackgroundColor))
+    }
+    private func fact(_ label:String,_ value:String) -> some View {
+        HStack(alignment:.firstTextBaseline) {
+            Text(label).foregroundStyle(.secondary)
+            Spacer(minLength:6)
+            Text(value).multilineTextAlignment(.trailing).monospacedDigit()
+        }.font(.caption)
+    }
+}
 struct TaskTableRow: View {
     @EnvironmentObject var w: Workspace
     let activity: Activity
     let depth: Int
     let visibleColumns: Set<String>
     let collapsed: Bool
+    let canCollapse: Bool
+    let contextOnly: Bool
     let toggleCollapse: () -> Void
     @State private var name = ""
     @State private var days = ""
@@ -409,7 +602,7 @@ struct TaskTableRow: View {
                 update { a in a.kind = kind; if kind != "task" { a.duration = 0; a.resource = ""; a.volume = nil; a.productivity = nil; a.volumeUnit = nil; a.earliestStart = nil; a.requestedStart = nil; a.requestedFinish = nil; a.lockStart = nil; a.lockFinish = nil } else if a.duration == 0 { a.duration = 1 } }
             })) { ForEach(EntityKind.values,id:\.self) { Text(EntityKind.title($0)).tag($0) } }.labelsHidden().frame(width:95).optionalColumn(visibleColumns.contains("kind"))
             HStack(spacing:3) {
-                if activity.entityType == "summary" { Button(action:toggleCollapse) { Image(systemName:collapsed ? "chevron.right" : "chevron.down").font(.caption2) }.buttonStyle(.plain) }
+                if activity.entityType == "summary" && canCollapse { Button(action:toggleCollapse) { Image(systemName:collapsed ? "chevron.right" : "chevron.down").font(.caption2) }.buttonStyle(.plain).accessibilityLabel(collapsed ? "Развернуть \(activity.name)" : "Свернуть \(activity.name)") }
                 Image(systemName:EntityKind.icon(activity.entityType)).font(.system(size:9)).foregroundStyle(activity.entityType == "summary" ? Color.primary : .teal)
                 TextField("Название",text:$name).textFieldStyle(.plain).fontWeight(activity.entityType == "summary" ? .semibold : .regular).focused($editing).onSubmit { commit() }
             }.padding(.leading,CGFloat(min(depth,8))*10).frame(width:210,alignment:.leading).optionalColumn(visibleColumns.contains("name"))
@@ -439,7 +632,7 @@ struct TaskTableRow: View {
             } label: { Image(systemName:"ellipsis") }.menuStyle(.borderlessButton).frame(width:40).optionalColumn(visibleColumns.contains("menu"))
 
             Spacer(minLength:0)
-        }.onAppear { sync() }.onChange(of:w.selectedIDs) { _,ids in if !ids.isEmpty { editing = false } }.onChange(of:activity) { _,_ in sync() }.onChange(of:editing) { old,new in if old && !new { commit() } }
+        }.disabled(contextOnly).onAppear { sync() }.onChange(of:activity) { _,_ in sync() }.onChange(of:editing) { old,new in if old && !new { commit() } }
     }
 }
 struct GanttRow: View {
@@ -758,6 +951,7 @@ struct TaskProperties: View {
                 Text("Тип: \(EntityKind.title(draft.entityType))")
                 TextField("Длительность, раб. дни",value:$draft.duration,format:.number).disabled(draft.entityType != "task" || draft.productivity != nil || (draft.volume != nil && w.plan.resources.first(where:{ $0.id == draft.resource })?.productivity != nil))
                 TextField("Приоритет 0–1000",value:Binding(get:{ draft.priority ?? 500 },set:{ draft.priority = $0 }),format:.number).disabled(draft.entityType == "summary")
+                TextField("Выполнено, %",value:$draft.progress,format:.number).disabled(draft.entityType == "summary")
                 TextField("Потребность ресурса",value:$draft.units,format:.number).disabled(draft.entityType != "task")
                 Picker("Ресурс",selection:$draft.resource) { Text("Не назначен").tag(""); ForEach(w.plan.resources) { Text($0.name).tag($0.id) } }.disabled(draft.entityType != "task")
                 TextField("Объём",value:$draft.volume,format:.number).disabled(draft.entityType != "task")

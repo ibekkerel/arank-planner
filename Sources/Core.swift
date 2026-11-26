@@ -74,6 +74,7 @@ struct Schedule: Codable, Equatable {
     var typeCatalog: [ResourceType]? = nil
     var resourceCalendars: [ResourceCalendar]? = nil
     var levelResources: Bool? = true
+    var resourceStrategy: ResourceStrategy? = nil
     static var demo: Schedule {
         Schedule(name: "Строительство · корпус А", activities: [
             Activity(id:"A",name:"Подготовка площадки",duration:4,progress:100,resource:"crew"),
@@ -89,12 +90,112 @@ struct Schedule: Codable, Equatable {
 }
 struct Timing { var start: Int; var finish: Int; var lateStart: Int; var float: Int }
 struct Calculation { var timings: [String:Timing]; var duration: Int; var conflicts: [String]; var cost: Double }
+enum ResourceStrategy: String, CaseIterable, Codable, Sendable {
+    case standard, downstream, shortest, reverseOrder
+
+    var title: String {
+        switch self {
+        case .standard: return "Обычный расчёт"
+        case .downstream: return "Длинная цепочка последующих работ"
+        case .shortest: return "Короткие работы раньше"
+        case .reverseOrder: return "Обратный порядок строк"
+        }
+    }
+}
+struct ResourceStrategyTrial {
+    let strategy: ResourceStrategy
+    let duration: Int?
+    let failure: String?
+}
+struct ResourceStrategyComparison {
+    let best: Calculation
+    let standard: Calculation?
+    let selected: ResourceStrategy
+    let trials: [ResourceStrategyTrial]
+    let limitation: String?
+}
 enum PlanError: LocalizedError {
     case invalid(String)
     var errorDescription: String? { if case .invalid(let s) = self { return s }; return nil }
 }
 struct Planner {
+    // All dispatch trials read the same immutable project dates; convert each distinct bound once.
+    private final class ComparisonContext {
+        var offsets: [String:Int] = [:]
+        func offset(_ value: String, plan: Schedule) throws -> Int {
+            if let cached = offsets[value] { return cached }
+            let offset = try Planner.offset(for:value,plan:plan,cancellable:true)
+            offsets[value] = offset
+            return offset
+        }
+    }
+
+    private static func usesResourceCalendars(_ plan: Schedule) -> Bool {
+        plan.resources.contains { $0.calendarID != nil || $0.timeUnit == "hour" }
+    }
+
+    static func activeResourceStrategy(_ plan: Schedule) -> ResourceStrategy {
+        guard (plan.levelResources ?? true), !usesResourceCalendars(plan) else { return .standard }
+        return plan.resourceStrategy ?? .standard
+    }
+
     static func calculate(_ plan: Schedule, applyResourceCalendars: Bool = true, validationOnly: Bool = false) throws -> Calculation {
+        try calculate(plan,applyResourceCalendars:applyResourceCalendars,validationOnly:validationOnly,strategy:activeResourceStrategy(plan))
+    }
+
+    // A read-only comparison of dispatch rules, not an optimality certificate.
+    static func compareResourceStrategies(_ plan: Schedule) throws -> ResourceStrategyComparison {
+        try Task<Never,Never>.checkCancellation()
+        let context = ComparisonContext()
+        let limit: String?
+        if !(plan.levelResources ?? true) {
+            limit = "Выравнивание ресурсов отключено."
+        } else if usesResourceCalendars(plan) {
+            limit = "Для сменных календарей и почасовых ресурсов доступен только обычный расчёт."
+        } else if plan.activities.count > 200 || plan.links.count > 1000 || plan.resources.count > 200 {
+            limit = "Сравнение ограничено 200 работами, 1 000 связями и 200 ресурсами."
+        } else {
+            let assignedTasks = plan.activities.filter { $0.entityType == "task" && !$0.resource.isEmpty }
+            let reused = Dictionary(grouping:assignedTasks,by: \.resource).values.contains { $0.count > 1 }
+            limit = reused ? nil : "Нет ресурса, назначенного нескольким работам."
+        }
+        if let limit {
+            let baseline = try calculate(plan,applyResourceCalendars:true,validationOnly:false,strategy:.standard,comparison:context)
+            return ResourceStrategyComparison(
+                best:baseline,standard:baseline,selected:.standard,
+                trials:[ResourceStrategyTrial(strategy:.standard,duration:baseline.duration,failure:nil)],
+                limitation:limit
+            )
+        }
+
+        var winner: (strategy: ResourceStrategy, result: Calculation)?
+        var standard: Calculation?
+        var trials: [ResourceStrategyTrial] = []
+        for strategy in ResourceStrategy.allCases {
+            try Task<Never,Never>.checkCancellation()
+            do {
+                let result = try calculate(plan,applyResourceCalendars:true,validationOnly:false,strategy:strategy,comparison:context)
+                guard result.conflicts.isEmpty else {
+                    throw PlanError.invalid(result.conflicts.joined(separator:"; "))
+                }
+                if strategy == .standard { standard = result }
+                trials.append(ResourceStrategyTrial(strategy:strategy,duration:result.duration,failure:nil))
+                // The standard result wins ties: a trial must improve the finish to displace it.
+                if winner.map({ result.duration < $0.result.duration }) ?? true { winner = (strategy,result) }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                trials.append(ResourceStrategyTrial(strategy:strategy,duration:nil,failure:error.localizedDescription))
+            }
+        }
+        guard let winner else {
+            let reason = trials.first?.failure ?? ""
+            throw PlanError.invalid("Ни одна из проверенных стратегий не нашла расписание. \(reason)")
+        }
+        return ResourceStrategyComparison(best:winner.result,standard:standard,selected:winner.strategy,trials:trials,limitation:nil)
+    }
+
+    private static func calculate(_ plan: Schedule, applyResourceCalendars: Bool, validationOnly: Bool, strategy: ResourceStrategy, comparison: ComparisonContext? = nil) throws -> Calculation {
         guard plan.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5","0.6"].contains(plan.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
         guard !plan.calendar.weekdays.isEmpty, Set(plan.calendar.weekdays).count == plan.calendar.weekdays.count, plan.calendar.weekdays.allSatisfy({(1...7).contains($0)}), TimeZone(identifier: plan.calendar.timezone) != nil else { throw PlanError.invalid("Неверный рабочий календарь") }
         guard validDate(plan.startDate), plan.calendar.holidays.allSatisfy(validDate) else { throw PlanError.invalid("Дата должна иметь вид ГГГГ-ММ-ДД") }
@@ -159,7 +260,7 @@ struct Planner {
         }
         guard order.count == executableIDs.count else { throw PlanError.invalid("Обнаружен цикл зависимостей. Удалите замыкающую связь.") }
         if validationOnly { return Calculation(timings:[:],duration:0,conflicts:[],cost:0) }
-        if applyResourceCalendars && plan.resources.contains(where:{ $0.calendarID != nil || $0.timeUnit == "hour" }) {
+        if applyResourceCalendars && usesResourceCalendars(plan) {
             return try CalendarScheduler.calculate(plan)
         }
         func weight(_ l: Link) -> Int {
@@ -168,15 +269,19 @@ struct Planner {
         }
         var lower:[String:Int] = [:], upper:[String:Int] = [:], exact:[String:Int] = [:]
         let horizon = 1000000
+        func dateOffset(_ value: String) throws -> Int {
+            if let comparison { return try comparison.offset(value,plan:plan) }
+            return try offset(for:value,plan:plan)
+        }
         for id in executableIDs {
             let task = tasks[id]!, duration = durations[id]!
             var lo = task.earliestStart ?? 0, hi = Int.max/4
             if let date = task.requestedStart {
-                let day = try offset(for:date,plan:plan); lo = max(lo,day)
+                let day = try dateOffset(date); lo = max(lo,day)
                 if task.lockStart == true { hi = min(hi,day); exact[id] = day }
             }
             if let date = task.requestedFinish {
-                let day = try offset(for:date,plan:plan) + (duration > 0 ? 1 : 0) - duration
+                let day = try dateOffset(date) + (duration > 0 ? 1 : 0) - duration
                 guard day >= 0 else { throw PlanError.invalid("Окончание задачи \(id) раньше допустимого для её длительности") }
                 lo = max(lo,day)
                 if task.lockFinish == true { hi = min(hi,day); if let fixed = exact[id], fixed != day { throw PlanError.invalid("Фиксированные начало и окончание задачи \(id) не соответствуют длительности") }; exact[id] = day }
@@ -208,16 +313,37 @@ struct Planner {
             }
             let originalIndex = Dictionary(uniqueKeysWithValues:executableIDs.enumerated().map { ($0.element,$0.offset) })
             let incoming = Dictionary(grouping:plan.links,by: \.to)
+            // Lower bound on relative finish considering every successor and the exact link kind/lag.
+            // Used only as a ready-queue tie-break; it does not replace the constraint checks.
+            var remainingPath: [String:Int] = [:]
+            if strategy == .downstream {
+                for id in order.reversed() {
+                    var length = durations[id]!
+                    for link in outgoing[id,default:[]] {
+                        length = max(length,weight(link)+remainingPath[link.to]!)
+                    }
+                    remainingPath[id] = length
+                }
+            }
             var pendingParents = Dictionary(uniqueKeysWithValues:executableIDs.map { ($0,incoming[$0,default:[]].count) })
             var ready = ReadyTaskQueue { a,b in
                 let deadlineA = upper[a]! <= horizon ? upper[a]! : Int.max, deadlineB = upper[b]! <= horizon ? upper[b]! : Int.max
                 if deadlineA != deadlineB { return deadlineA < deadlineB }
                 if (tasks[a]!.priority ?? 500) != (tasks[b]!.priority ?? 500) { return (tasks[a]!.priority ?? 500) > (tasks[b]!.priority ?? 500) }
+                switch strategy {
+                case .standard: break
+                case .downstream:
+                    if remainingPath[a] != remainingPath[b] { return remainingPath[a]! > remainingPath[b]! }
+                case .shortest:
+                    if durations[a] != durations[b] { return durations[a]! < durations[b]! }
+                case .reverseOrder: return originalIndex[a]! > originalIndex[b]!
+                }
                 return originalIndex[a]! < originalIndex[b]!
             }
             for id in executableIDs where pendingParents[id] == 0 { ready.insert(id) }
             var scheduledCount = 0
             while scheduledCount < executableIDs.count {
+                if comparison != nil { try Task<Never,Never>.checkCancellation() }
                 guard let id = ready.pop() else { throw PlanError.invalid("Не удалось выбрать следующую задачу") }
                 let task = tasks[id]!, duration = durations[id]!
                 if !task.resource.isEmpty, duration > 0, task.units > resources[task.resource]!.capacity + 0.000001 { throw PlanError.invalid("Потребность задачи \(id) превышает доступность ресурса") }
@@ -290,7 +416,7 @@ struct Planner {
         // Unknown fields must not be silently dropped by this version.
         let root = try JSONSerialization.jsonObject(with:data) as? [String:Any] ?? [:]
         func check(_ object: [String:Any], allowed: Set<String>) throws { let unknown = Set(object.keys).subtracting(allowed); if !unknown.isEmpty { throw PlanError.invalid("Неизвестные поля: \(unknown.sorted().joined(separator:", ")). Файл не изменён.") } }
-        try check(root,allowed:["format","version","id","name","startDate","currency","calendar","activities","links","resources","baseline","unitCatalog","typeCatalog","levelResources","resourceCalendars"])
+        try check(root,allowed:["format","version","id","name","startDate","currency","calendar","activities","links","resources","baseline","unitCatalog","typeCatalog","levelResources","resourceCalendars","resourceStrategy"])
         for (key,fields) in [("activities",Set(["id","name","duration","progress","resource","units","volume","productivity","ifcGlobalIds","kind","parent","volumeUnit","earliestStart","requestedStart","requestedFinish","lockStart","lockFinish","priority"])),("links",Set(["id","from","to","type","lag"])),("resources",Set(["id","name","capacity","dailyRate","typeID","productivity","calendarID","timeUnit"])),("unitCatalog",Set(["id","name","symbol"])),("typeCatalog",Set(["id","name","unitID","outputUnitID"]))] {
             for obj in root[key] as? [[String:Any]] ?? [] { try check(obj,allowed:fields) }
         }
@@ -307,6 +433,11 @@ struct Planner {
         }
         if let calendar = root["calendar"] as? [String:Any] { try check(calendar,allowed:["timezone","weekdays","holidays"]) }
         if let baseline = root["baseline"] as? [String:[String:Any]] { for obj in baseline.values { try check(obj,allowed:["start","finish"]) } }
+        if let raw = root["resourceStrategy"], !(raw is NSNull) {
+            guard let name = raw as? String, ResourceStrategy(rawValue:name) != nil else {
+                throw PlanError.invalid("Неизвестная стратегия выравнивания ресурсов. Файл не изменён.")
+            }
+        }
         var p = try JSONDecoder().decode(Schedule.self,from:data)
         guard p.format == "OpenSchedule", ["0.1","0.2","0.3","0.4","0.5","0.6"].contains(p.version) else { throw PlanError.invalid("Неподдерживаемый формат или версия") }
         for i in p.activities.indices { if p.activities[i].kind == nil { p.activities[i].kind = p.activities[i].duration == 0 ? "milestone" : "task" } }
@@ -324,6 +455,7 @@ struct Planner {
         var normalized = plan; normalized.version = "0.6"
         for i in normalized.activities.indices { normalized.activities[i].kind = normalized.activities[i].entityType }
         normalized.unitCatalog = plan.measurementUnits; normalized.typeCatalog = plan.resourceTypes; normalized.levelResources = plan.levelResources ?? true
+        if normalized.resourceStrategy == .standard { normalized.resourceStrategy = nil }
         try encoder.encode(normalized).write(to:url,options:.atomic)
     }
 }
@@ -403,15 +535,18 @@ extension Planner {
 }
 
 extension Planner {
-    static func offset(for value:String,plan:Schedule) throws -> Int {
+    static func offset(for value:String,plan:Schedule,cancellable:Bool = false) throws -> Int {
         guard validDate(value) else { throw PlanError.invalid("Дата должна иметь вид ГГГГ-ММ-ДД") }
         let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX"); formatter.timeZone = TimeZone(identifier:plan.calendar.timezone); formatter.dateFormat = "yyyy-MM-dd"
         var calendar = Calendar(identifier:.gregorian); calendar.timeZone = formatter.timeZone
-        let target = formatter.date(from:value)!
+        guard let target = formatter.date(from:value), formatter.string(from:target) == value else {
+            throw PlanError.invalid("Дата не существует в часовом поясе календаря проекта")
+        }
         guard plan.calendar.weekdays.contains(calendar.component(.weekday,from:target)), !plan.calendar.holidays.contains(value) else { throw PlanError.invalid("Выберите рабочий день календаря проекта") }
         var current = formatter.date(from:date(0,plan:plan))!; var count = 0
         guard target >= current else { throw PlanError.invalid("Дата раньше начала проекта") }
         while current < target {
+            if cancellable { try Task<Never,Never>.checkCancellation() }
             current = calendar.date(byAdding:.day,value:1,to:current)!
             if plan.calendar.weekdays.contains(calendar.component(.weekday,from:current)), !plan.calendar.holidays.contains(formatter.string(from:current)) { count += 1 }
             guard count <= 100000 else { throw PlanError.invalid("Дата слишком далеко от начала проекта") }

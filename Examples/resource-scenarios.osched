@@ -1,0 +1,72 @@
+{
+  "activities": [
+    {
+      "duration": 3,
+      "id": "A",
+      "ifcGlobalIds": [],
+      "kind": "task",
+      "name": "Перестановка оборудования",
+      "progress": 0,
+      "resource": "crane",
+      "units": 1
+    },
+    {
+      "duration": 1,
+      "id": "B",
+      "ifcGlobalIds": [],
+      "kind": "task",
+      "name": "Установить узел краном",
+      "progress": 0,
+      "resource": "crane",
+      "units": 1
+    },
+    {
+      "duration": 5,
+      "id": "C",
+      "ifcGlobalIds": [],
+      "kind": "task",
+      "name": "Подключить и проверить узел",
+      "progress": 0,
+      "resource": "",
+      "units": 1
+    }
+  ],
+  "baseline": {},
+  "calendar": {
+    "holidays": [],
+    "timezone": "Europe/Moscow",
+    "weekdays": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "currency": "RUB",
+  "format": "OpenSchedule",
+  "id": "demo-crane-scenarios",
+  "levelResources": true,
+  "links": [
+    {
+      "from": "B",
+      "id": "BC",
+      "lag": 0,
+      "to": "C",
+      "type": "FS"
+    }
+  ],
+  "name": "Очередь крана · пример сравнения",
+  "resources": [
+    {
+      "capacity": 1,
+      "dailyRate": 0,
+      "id": "crane",
+      "name": "Кран"
+    }
+  ],
+  "startDate": "2026-11-09",
+  "typeCatalog": [],
+  "unitCatalog": [],
+  "version": "0.6"
+}

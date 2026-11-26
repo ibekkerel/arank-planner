@@ -337,6 +337,10 @@
         }
       }
     },
+    "resourceStrategy": {
+      "description": "Optional resource dispatch rule. Missing or null means standard.",
+      "enum": [null, "standard", "downstream", "shortest", "reverseOrder"]
+    },
     "levelResources": {
       "type": "boolean"
     },

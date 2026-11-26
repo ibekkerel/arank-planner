@@ -271,4 +271,77 @@ expect(parentSnapshot.parentChoices(for:"root").map(\.id) == ["other"],"parent o
 expect(parentSnapshot.parentChoices(for:"child").map(\.id) == ["root","other"],"parent options preserve valid ancestors")
 expect(parentSnapshot.parentChoices(for:"leaf").map(\.id) == ["root","child","other"],"leaf parent options")
 expect(parentSnapshot.parentChoices(for:"root").map(\.id) == ["other"] && parentSnapshot.calculationBuildCount == 0,"parent options cache does not calculate schedule")
+
+// The same crane and three activities: dispatch order, not changed model inputs, explains the gain.
+let scenarioPlan = Schedule(name:"Crane scenario",activities:[
+    Activity(id:"A",name:"Independent crane work",duration:3,resource:"crane"),
+    Activity(id:"B",name:"Start successor chain",duration:1,resource:"crane"),
+    Activity(id:"C",name:"Long downstream work",duration:5)
+],links:[Link(from:"B",to:"C")],resources:[Resource(id:"crane",name:"Crane",dailyRate:10)])
+let ordinaryScenario = try Planner.calculate(scenarioPlan)
+let comparison = try Planner.compareResourceStrategies(scenarioPlan)
+expect(ordinaryScenario.duration == 9 && comparison.standard?.duration == 9 && comparison.trials.first?.duration == 9,"scenario baseline matches ordinary solver")
+expect(comparison.selected == .downstream && comparison.best.duration == 6,"critical successor order improves 9 to 6")
+expect(comparison.best.timings["B"]!.start == 0 && comparison.best.timings["A"]!.start == 1 && comparison.best.timings["C"]!.start == 1,"winner respects capacity and FS link")
+expect(comparison.best.conflicts.isEmpty && comparison.best.cost == ordinaryScenario.cost && comparison.trials.count == 4,"audited winner has no overload and preserves cost")
+expect(scenarioPlan.resourceStrategy == nil && scenarioPlan.baseline.isEmpty,"comparison does not edit project or baseline")
+var adopted = scenarioPlan; adopted.resourceStrategy = comparison.selected
+expect(try Planner.calculate(adopted).duration == 6,"selected strategy used for ordinary calculation")
+let adoptedComparison = try Planner.compareResourceStrategies(adopted)
+expect(adoptedComparison.trials.first?.duration == 9 && adoptedComparison.selected == .downstream,"stored choice does not replace comparison baseline")
+let scenarioURL = u.deletingLastPathComponent().appendingPathComponent("resource-strategy-test.osched")
+defer { try? FileManager.default.removeItem(at:scenarioURL) }
+try Planner.save(adopted,to:scenarioURL)
+let adoptedReload = try Planner.load(scenarioURL)
+expect(adoptedReload.resourceStrategy == .downstream,"nonstandard choice roundtrips")
+expect(try Planner.calculate(adoptedReload).duration == 6,"reopened project recalculates with stored choice")
+var scenarioJSON = try JSONSerialization.jsonObject(with:Data(contentsOf:scenarioURL)) as! [String:Any]
+scenarioJSON["resourceStrategy"] = "future-strategy"
+try JSONSerialization.data(withJSONObject:scenarioJSON).write(to:scenarioURL)
+do { _ = try Planner.load(scenarioURL); fatalError("accepted unknown resource strategy") } catch { checks += 1 }
+adopted.resourceStrategy = .standard
+try Planner.save(adopted,to:scenarioURL)
+let ordinaryJSON = try JSONSerialization.jsonObject(with:Data(contentsOf:scenarioURL)) as! [String:Any]
+expect(ordinaryJSON["resourceStrategy"] == nil,"normal strategy omitted for older readers")
+
+var higherPriority = scenarioPlan; higherPriority.activities[0].priority = 900
+let priorityComparison = try Planner.compareResourceStrategies(higherPriority)
+expect(priorityComparison.selected == .standard && priorityComparison.best.duration == 9 && priorityComparison.trials.allSatisfy { $0.duration == 9 },"heuristics honor explicit priority and ordinary wins ties")
+
+let recoverable = Schedule(name:"Fixed milestone with competing crane work",activities:[
+    Activity(id:"A",name:"Long use",duration:4,resource:"crane"),
+    Activity(id:"B",name:"Short use",duration:2,resource:"crane"),
+    Activity(id:"M",name:"Fixed milestone",duration:0,requestedStart:"2026-11-17",lockStart:true)
+],links:[Link(from:"A",to:"M"),Link(from:"B",to:"M",lag:2)],resources:[Resource(id:"crane",name:"Crane")])
+rejects(recoverable,"ordinary dispatch misses equal latest-start bounds")
+let recovery = try Planner.compareResourceStrategies(recoverable)
+expect(recovery.standard == nil && recovery.trials.first?.failure != nil && recovery.selected == .shortest,"alternative finds a schedule ordinary dispatch misses")
+expect(recovery.best.timings["B"]!.start == 0 && recovery.best.timings["A"]!.start == 2 && recovery.best.timings["M"]!.start == 6,"winner honors fixed date, lag and capacity")
+var holidayScenario = recoverable
+holidayScenario.calendar.holidays = ["2026-11-10"]
+holidayScenario.activities[2].requestedStart = "2026-11-18"
+let holidayComparison = try Planner.compareResourceStrategies(holidayScenario)
+expect(holidayComparison.selected == .shortest && Planner.projectFinishDate(holidayComparison.best,plan:holidayScenario) == "2026-11-18","comparison maps fixed milestone through project holiday")
+var impossibleScenario = recoverable
+impossibleScenario.activities[0].requestedStart = "2026-11-09"; impossibleScenario.activities[0].lockStart = true
+impossibleScenario.activities[1].requestedStart = "2026-11-09"; impossibleScenario.activities[1].lockStart = true
+do {
+    _ = try Planner.compareResourceStrategies(impossibleScenario)
+    fatalError("comparison bypassed incompatible fixed resource reservations")
+} catch { checks += 1 }
+var candidateCalendar = calendarReload; candidateCalendar.resourceStrategy = .reverseOrder
+let onlyCalendarStandard = try Planner.compareResourceStrategies(candidateCalendar)
+expect(onlyCalendarStandard.selected == .standard && onlyCalendarStandard.trials.count == 1 && onlyCalendarStandard.limitation != nil,"shift calendar uses ordinary solver only")
+let effectiveCalendar = try Planner.calculate(candidateCalendar)
+expect(Planner.activeResourceStrategy(candidateCalendar) == .standard && onlyCalendarStandard.best.duration == effectiveCalendar.duration,"stored strategy stays inactive with a shift calendar")
+var unlevelledScenario = scenarioPlan; unlevelledScenario.levelResources = false; unlevelledScenario.resourceStrategy = .downstream
+let onlyUnlevelled = try Planner.compareResourceStrategies(unlevelledScenario)
+expect(onlyUnlevelled.selected == .standard && onlyUnlevelled.limitation != nil && !onlyUnlevelled.best.conflicts.isEmpty,"comparison cannot change an unlevelled plan")
+var oversizedScenario = scenarioPlan
+oversizedScenario.activities += (0..<200).map { Activity(id:"extra-\($0)",name:"Unassigned work",duration:1) }
+let onlyOversized = try Planner.compareResourceStrategies(oversizedScenario)
+expect(onlyOversized.trials.count == 1 && onlyOversized.limitation != nil,"oversized project avoids repeated calculations")
+let nonContended = try Planner.compareResourceStrategies(isolated)
+expect(nonContended.trials.count == 1 && nonContended.limitation != nil,"single unassigned task has no dispatch comparison")
+
 print("PASS: \(checks) checks")

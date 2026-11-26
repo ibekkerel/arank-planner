@@ -1,0 +1,30 @@
+name: Planner macOS checks
+on:
+  pull_request:
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Examples/**'
+      - '*.command'
+      - 'Info.plist'
+      - 'openschedule.schema.json'
+      - '.github/workflows/planner-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build the macOS app
+        run: |
+          ./build.command
+          codesign --verify --deep --strict build/ArankPlanner.app
+      - name: Run scheduling and workspace filter tests
+        run: ./test.command
+      - name: Run workspace calculation-mode tests
+        run: ./test-calculation-mode.command
