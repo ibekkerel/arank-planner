@@ -7,6 +7,7 @@ on:
       - 'Examples/**'
       - '*.command'
       - 'Info.plist'
+      - 'WORKSPACE-GUIDE.md'
       - 'openschedule.schema.json'
       - '.github/workflows/planner-checks.yml'
   workflow_dispatch:
@@ -24,6 +25,8 @@ jobs:
         run: |
           ./build.command
           codesign --verify --deep --strict build/ArankPlanner.app
+          cmp WORKSPACE-GUIDE.md build/ArankPlanner.app/Contents/Resources/WORKSPACE-GUIDE.md
+          cmp Examples/resource-scenarios.osched build/ArankPlanner.app/Contents/Resources/resource-scenarios.osched
       - name: Run scheduling and workspace filter tests
         run: ./test.command
       - name: Run workspace calculation-mode tests

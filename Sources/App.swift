@@ -66,6 +66,22 @@ import UniformTypeIdentifiers
         guard p.runModal() == .OK, let u = p.url else { return }
         do { plan = try Planner.load(u); previousAnalysis = nil; needsCalculation = false; url = u; dirty = false; selection = plan.activities.first?.id; selectedIDs = []; projectGeneration += 1 } catch { self.error = error.localizedDescription }
     }
+    @discardableResult
+    func openScenarioExample(from source: URL?) -> Bool {
+        guard let source else { error = "Учебный график не найден в приложении."; return false }
+        guard canReplace() else { return false }
+        do {
+            let example = try Planner.load(source)
+            install(example,calculation:try Planner.calculate(example))
+            // Never save over the example bundled in the application.
+            url = nil; selection = example.activities.first?.id; selectedIDs = []
+            dirty = false; projectGeneration += 1
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
     func newProject() {
         guard canReplace() else { return }
         install(Schedule(name:"Новый проект",activities:[],links:[],resources:[]),calculation:Calculation(timings:[:],duration:0,conflicts:[],cost:0))
@@ -142,6 +158,7 @@ struct MainView: View {
     @State var showMetrics = true
     @State private var showInspector = false
     @State private var showResourceScenarios = false
+    @State private var showWorkspaceGuide = false
     @State private var scrollToRow: String?
     @State private var search = ""
     @State private var filter: WorkFilter = .all
@@ -214,6 +231,15 @@ struct MainView: View {
         .onChange(of:w.projectGeneration) { _,_ in resetFilters(); collapsed.removeAll(); columnOffset = 0; canvasScrollX = 0; showLinks = false; tab = "График" }
         .alert("Не удалось выполнить действие",isPresented:Binding(get:{ !w.error.isEmpty },set:{ if !$0 { w.error = "" } })) { Button("OK") { w.error = "" } } message: { Text(w.error) }
         .sheet(isPresented:$showResourceScenarios) { ResourceScenarioSheet(workspace:w) }
+        .sheet(isPresented:$showWorkspaceGuide) {
+            WorkspaceGuideSheet {
+                // Close the sheet before presenting a possible save prompt from the main window.
+                showWorkspaceGuide = false
+                DispatchQueue.main.async {
+                    w.openScenarioExample(from:Bundle.main.url(forResource:"resource-scenarios",withExtension:"osched"))
+                }
+            }
+        }
         .sheet(item:$w.pendingMove) { proposal in MoveConfirmation(proposal:proposal) }
         .sheet(item:$properties) { activity in TaskProperties(activity:activity) }
         .sheet(item:$w.propertyActivity) { activity in TaskProperties(activity:activity) }
@@ -299,6 +325,10 @@ struct MainView: View {
                         .background(tab == value ? Color.arankBlue.opacity(0.17) : Color.clear,in:RoundedRectangle(cornerRadius:7))
                 }.buttonStyle(.plain).accessibilityAddTraits(tab == value ? .isSelected : [])
             }
+            Button { showWorkspaceGuide = true } label: {
+                Image(systemName:"questionmark.circle").font(.system(size:17))
+            }.buttonStyle(.plain).frame(width:30,height:30)
+                .help("Справка и учебный график").accessibilityLabel("Справка")
         }.padding(.horizontal,16).frame(height:52).background(Color.arankChrome)
             .overlay(alignment:.bottom) { Divider() }
     }
